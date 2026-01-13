@@ -288,7 +288,7 @@ def generate_insight_summary(info, finance, zoning, env_features, user_comment, 
 # --- [데이터 조회 함수] ---
 @st.cache_data(show_spinner=False)
 def get_pnu_and_coords(address):
-    url = "http://api.vworld.kr/req/search"
+    url = "https://api.vworld.kr/req/search"
     search_type = 'road' if '로' in address or '길' in address else 'parcel'
     params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
     try:
@@ -312,7 +312,7 @@ def get_pnu_and_coords(address):
 
 @st.cache_data(show_spinner=False)
 def get_zoning_smart(lat, lng):
-    url = "http://api.vworld.kr/req/data"
+    url = "https://api.vworld.kr/req/data"
     delta = 0.0005
     min_x, min_y = lng - delta, lat - delta
     max_x, max_y = lng + delta, lat + delta
@@ -1126,3 +1126,4 @@ if addr_input:
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
 
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
