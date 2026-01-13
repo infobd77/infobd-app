@@ -292,11 +292,13 @@ def get_pnu_and_coords(address):
     search_type = 'road' if '로' in address or '길' in address else 'parcel'
     params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
     try:
-        res = requests.get(url, params=params, timeout=3)
+        # [수정] verify=False 추가
+        res = requests.get(url, params=params, timeout=3, verify=False)
         data = res.json()
         if data['response']['status'] == 'NOT_FOUND':
             params['query'] = "서울특별시 " + address
-            res = requests.get(url, params=params, timeout=3)
+            # [수정] verify=False 추가
+            res = requests.get(url, params=params, timeout=3, verify=False)
             data = res.json()
         if data['response']['status'] == 'NOT_FOUND': return None
         item = data['response']['result']['items'][0]
@@ -423,7 +425,8 @@ def get_cadastral_map_image(lat, lng):
 def get_static_map_image(lat, lng):
     url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        res = requests.get(url, timeout=3)
+        # [수정] verify=False 추가
+        res = requests.get(url, timeout=3, verify=False)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): 
             return BytesIO(res.content)
     except: pass
@@ -679,7 +682,8 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     # 엑셀에도 VWorld 정적 지도 사용 (네이버 지도 정적 이미지는 유료일 수 있음)
     map_img_xls = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        res = requests.get(map_img_xls, timeout=3)
+        # [수정] verify=False 추가
+        res = requests.get(map_img_xls, timeout=3, verify=False)
         if res.status_code == 200:
             worksheet.insert_image('B23', 'map.png', {'image_data': BytesIO(res.content), 'x_scale': 0.7, 'y_scale': 0.7})
     except: pass
@@ -926,7 +930,7 @@ if addr_input:
                 tot_price_per_py = 0
                 
                 if land_py > 0: land_price_per_py = (price_won / land_py) / 10000 
-                if tot_py > 0: tot_price_per_py = (price_won / tot_py) / 10000       
+                if tot_py > 0: tot_price_per_py = (price_won / tot_py) / 10000        
 
                 cp1, cp2 = st.columns(2)
                 with cp1:
@@ -1126,5 +1130,3 @@ if addr_input:
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
 
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-
