@@ -732,7 +732,7 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     return output.getvalue()
 
 # [메인 실행]
-st.title("🏢 부동산 매입 분석기 Pro")
+st.title("🏢 빌딩매매 분석기 Pro")
 st.markdown("---")
 
 # --- [통합된 부분] 지도에서 클릭하여 찾기 ---
@@ -1118,3 +1118,4 @@ if addr_input:
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
 
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
