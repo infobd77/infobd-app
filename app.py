@@ -152,8 +152,8 @@ def create_session():
     # [핵심 수정] 브이월드를 속이기 위한 완벽한 위장 헤더
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Referer": "http://localhost:8501",  # 이 부분이 중요합니다!
-        "Origin": "http://localhost:8501",
+        "Referer": "https://share.streamlit.io",  # 이 부분이 중요합니다!
+        "Origin": "https://share.streamlit.io",
         "Accept": "*/*"
     })
     return session
@@ -1159,4 +1159,5 @@ if addr_input:
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
 
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
 
