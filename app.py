@@ -127,14 +127,12 @@ st.markdown("""
 # =========================================================
 # [설정] 인증키 및 전역 변수 초기화
 # =========================================================
-# [수정] 401 에러 해결을 위해 Decoding 키(==)로 복구 (Python 코드는 Decoding 키가 필수입니다)
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
 VWORLD_KEY = "47B30ADD-AECB-38F3-B5B4-DD92CCA756C5"
 KAKAO_API_KEY = "2a3330b822a5933035eacec86061ee41"
 
 if 'zoning' not in st.session_state: st.session_state['zoning'] = ""
 if 'selling_summary' not in st.session_state: st.session_state['selling_summary'] = []
-# [유지] 초기값 0으로 설정 (빈칸 처리용)
 if 'price' not in st.session_state: st.session_state['price'] = 0
 if 'addr' not in st.session_state: st.session_state['addr'] = "" 
 if 'last_click_lat' not in st.session_state: st.session_state['last_click_lat'] = 0.0
@@ -156,8 +154,10 @@ def get_address_from_coords(lat, lng):
         "errorformat": "json",
         "key": VWORLD_KEY
     }
+    # [수정] localhost 대신 streamlit 주소 사용
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://share.streamlit.io"}
     try:
-        response = requests.get(url, params=params, timeout=5, verify=False)
+        response = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
         data = response.json()
         if data.get('response', {}).get('status') == 'OK':
             return data['response']['result'][0]['text']
@@ -193,7 +193,6 @@ def comma_input(label, unit, key, default_val, help_text=""):
         
         val_input = st.text_input(label, value=formatted_val, key=f"{key}_widget", label_visibility="hidden")
         try:
-            # 입력값이 없으면 0으로 처리
             if val_input.strip() == "":
                 new_val = 0
             else:
@@ -290,27 +289,53 @@ def generate_insight_summary(info, finance, zoning, env_features, user_comment, 
 def get_pnu_and_coords(address):
     url = "https://api.vworld.kr/req/search"
     search_type = 'road' if '로' in address or '길' in address else 'parcel'
-    params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
+    params = {
+        "service": "search", 
+        "request": "search", 
+        "version": "2.0", 
+        "crs": "EPSG:4326", 
+        "size": "1", 
+        "page": "1", 
+        "query": address, 
+        "type": "address", 
+        "category": search_type, 
+        "format": "json", 
+        "errorformat": "json", 
+        "key": VWORLD_KEY
+    }
+    
+    # [수정] localhost 대신 streamlit 주소 사용
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://share.streamlit.io"}
+
     try:
-        # [수정] verify=False 추가
-        res = requests.get(url, params=params, timeout=3, verify=False)
+        # [수정] verify=False 유지
+        res = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
         data = res.json()
+        
+        # [🚨진단] 에러 메시지 출력 기능 추가
+        if data.get('response', {}).get('status') != 'OK' and data.get('response', {}).get('status') != 'NOT_FOUND':
+             st.error(f"⚠️ 서버 거절 이유: {data}")
+
         if data['response']['status'] == 'NOT_FOUND':
             params['query'] = "서울특별시 " + address
-            # [수정] verify=False 추가
-            res = requests.get(url, params=params, timeout=3, verify=False)
+            res = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
             data = res.json()
+        
         if data['response']['status'] == 'NOT_FOUND': return None
+        
         item = data['response']['result']['items'][0]
         pnu = item.get('address', {}).get('pnu') or item.get('id')
-        lng = float(item['point']['x']); lat = float(item['point']['y'])
+        lng = float(item['point']['x'])
+        lat = float(item['point']['y'])
         
         full_address = item.get('address', {}).get('parcel', '') 
         if not full_address: full_address = item.get('address', {}).get('road', '') 
         if not full_address: full_address = address
 
         return {"pnu": pnu, "lat": lat, "lng": lng, "full_addr": full_address}
-    except: return None
+    except Exception as e:
+        st.error(f"❌ 연결 오류: {e}")
+        return None
 
 @st.cache_data(show_spinner=False)
 def get_zoning_smart(lat, lng):
@@ -414,7 +439,8 @@ def get_cadastral_map_image(lat, lng):
     bbox = f"{minx},{miny},{maxx},{maxy}"
     layer = "LP_PA_CBND_BUBUN"
     url = f"https://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "http://localhost:8501"}
+    # [수정] localhost 대신 streamlit 주소 사용
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://share.streamlit.io"}
     try:
         res = requests.get(url, headers=headers, timeout=5, verify=False)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
@@ -425,7 +451,7 @@ def get_cadastral_map_image(lat, lng):
 def get_static_map_image(lat, lng):
     url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        # [수정] verify=False 추가
+        # [수정] verify=False 유지
         res = requests.get(url, timeout=3, verify=False)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): 
             return BytesIO(res.content)
