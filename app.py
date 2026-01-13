@@ -17,6 +17,8 @@ import datetime
 import folium
 from streamlit_folium import st_folium
 import streamlit.components.v1 as components
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -140,6 +142,22 @@ if 'last_click_lat' not in st.session_state: st.session_state['last_click_lat'] 
 def reset_analysis():
     st.session_state['selling_summary'] = []
 
+# --- [네트워크 요청 함수 (재시도 로직 포함)] ---
+def create_session():
+    session = requests.Session()
+    retry = Retry(connect=3, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    # [핵심 수정] 브이월드를 속이기 위한 완벽한 위장 헤더
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Referer": "http://localhost:8501",  # 이 부분이 중요합니다!
+        "Origin": "http://localhost:8501",
+        "Accept": "*/*"
+    })
+    return session
+
 # --- [좌표 -> 주소 변환 함수] ---
 def get_address_from_coords(lat, lng):
     url = "https://api.vworld.kr/req/address" 
@@ -154,10 +172,9 @@ def get_address_from_coords(lat, lng):
         "errorformat": "json",
         "key": VWORLD_KEY
     }
-    # [수정] localhost 대신 streamlit 주소 사용
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://share.streamlit.io"}
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
+        session = create_session()
+        response = session.get(url, params=params, timeout=10, verify=False)
         data = response.json()
         if data.get('response', {}).get('status') == 'OK':
             return data['response']['result'][0]['text']
@@ -289,36 +306,20 @@ def generate_insight_summary(info, finance, zoning, env_features, user_comment, 
 def get_pnu_and_coords(address):
     url = "https://api.vworld.kr/req/search"
     search_type = 'road' if '로' in address or '길' in address else 'parcel'
-    params = {
-        "service": "search", 
-        "request": "search", 
-        "version": "2.0", 
-        "crs": "EPSG:4326", 
-        "size": "1", 
-        "page": "1", 
-        "query": address, 
-        "type": "address", 
-        "category": search_type, 
-        "format": "json", 
-        "errorformat": "json", 
-        "key": VWORLD_KEY
-    }
+    params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
     
-    # [수정] localhost 대신 streamlit 주소 사용
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://share.streamlit.io"}
-
     try:
-        # [수정] verify=False 유지
-        res = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
+        session = create_session()
+        # [수정] 위장된 세션으로 요청
+        res = session.get(url, params=params, timeout=10, verify=False)
         data = res.json()
         
-        # [🚨진단] 에러 메시지 출력 기능 추가
         if data.get('response', {}).get('status') != 'OK' and data.get('response', {}).get('status') != 'NOT_FOUND':
-             st.error(f"⚠️ 서버 거절 이유: {data}")
+             st.error(f"⚠️ 서버 응답: {data}")
 
         if data['response']['status'] == 'NOT_FOUND':
             params['query'] = "서울특별시 " + address
-            res = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
+            res = session.get(url, params=params, timeout=10, verify=False)
             data = res.json()
         
         if data['response']['status'] == 'NOT_FOUND': return None
@@ -345,7 +346,8 @@ def get_zoning_smart(lat, lng):
     max_x, max_y = lng + delta, lat + delta
     params = {"service": "data", "request": "GetFeature", "data": "LT_C_UQ111", "key": VWORLD_KEY, "format": "json", "size": "10", "geomFilter": f"BOX({min_x},{min_y},{max_x},{max_y})", "domain": "localhost"}
     try:
-        res = requests.get(url, params=params, timeout=3, verify=False)
+        session = create_session()
+        res = session.get(url, params=params, timeout=10, verify=False)
         if res.status_code == 200:
             data = res.json()
             features = data.get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
@@ -360,10 +362,11 @@ def get_land_price(pnu):
     url = "http://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr"
     current_year = datetime.datetime.now().year
     years_to_check = range(current_year, current_year - 7, -1) 
+    session = create_session()
     for year in years_to_check:
         params = {"serviceKey": USER_KEY, "pnu": pnu, "format": "xml", "numOfRows": "1", "pageNo": "1", "stdrYear": str(year)}
         try:
-            res = requests.get(url, params=params, timeout=4)
+            res = session.get(url, params=params, timeout=5)
             if res.status_code == 200:
                 root = ET.fromstring(res.content)
                 if root.findtext('.//resultCode') == '00':
@@ -380,7 +383,8 @@ def get_building_info_smart(pnu):
     plat_code = '1' if pnu[10] == '2' else '0'
     params = {"serviceKey": USER_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat_code, "bun": bun, "ji": ji, "numOfRows": "1", "pageNo": "1"}
     try:
-        res = requests.get(base_url, params=params, timeout=5, verify=False)
+        session = create_session()
+        res = session.get(base_url, params=params, timeout=10, verify=False)
         if res.status_code == 200: return parse_xml_response(res.content)
         return {"error": f"서버 상태: {res.status_code}"}
     except Exception as e: return {"error": str(e)}
@@ -439,10 +443,9 @@ def get_cadastral_map_image(lat, lng):
     bbox = f"{minx},{miny},{maxx},{maxy}"
     layer = "LP_PA_CBND_BUBUN"
     url = f"https://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
-    # [수정] localhost 대신 streamlit 주소 사용
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://share.streamlit.io"}
     try:
-        res = requests.get(url, headers=headers, timeout=5, verify=False)
+        session = create_session()
+        res = session.get(url, timeout=10, verify=False)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
     except: pass
     return None
@@ -451,8 +454,8 @@ def get_cadastral_map_image(lat, lng):
 def get_static_map_image(lat, lng):
     url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        # [수정] verify=False 유지
-        res = requests.get(url, timeout=3, verify=False)
+        session = create_session()
+        res = session.get(url, timeout=10, verify=False)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): 
             return BytesIO(res.content)
     except: pass
