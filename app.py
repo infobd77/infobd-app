@@ -130,6 +130,7 @@ st.markdown("""
 # [설정] 인증키 및 전역 변수 초기화
 # =========================================================
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
+# [사장님 VWorld 키]
 VWORLD_KEY = "4C3FCB47-0CA1-33F3-AE96-A990857D5902"
 KAKAO_API_KEY = "2a3330b822a5933035eacec86061ee41"
 
@@ -149,12 +150,11 @@ def create_session():
     adapter = HTTPAdapter(max_retries=retry)
     session.mount('http://', adapter)
     session.mount('https://', adapter)
-    # [핵심 수정] 브이월드를 속이기 위한 완벽한 위장 헤더
+    
+    # [수정] Origin 제거, User-Agent 단순화
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Referer": "https://share.streamlit.io",  # 이 부분이 중요합니다!
-        "Origin": "https://share.streamlit.io",
-        "Accept": "*/*"
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://share.streamlit.io" 
     })
     return session
 
@@ -314,8 +314,9 @@ def get_pnu_and_coords(address):
         res = session.get(url, params=params, timeout=10, verify=False)
         data = res.json()
         
+        # [🚨진단] 에러 메시지 출력 기능 추가
         if data.get('response', {}).get('status') != 'OK' and data.get('response', {}).get('status') != 'NOT_FOUND':
-             st.error(f"⚠️ 서버 응답: {data}")
+             st.error(f"⚠️ 서버 응답 코드: {res.status_code}, 메시지: {data}")
 
         if data['response']['status'] == 'NOT_FOUND':
             params['query'] = "서울특별시 " + address
@@ -1159,5 +1160,3 @@ if addr_input:
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
 
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-
