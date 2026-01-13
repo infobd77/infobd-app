@@ -1,5 +1,4 @@
 import streamlit as st
-import requests
 import xml.etree.ElementTree as ET
 import pandas as pd
 from io import BytesIO
@@ -13,13 +12,14 @@ from urllib.parse import quote_plus
 import time
 import urllib3
 import datetime
+import urllib.request # [핵심] 내장 라이브러리 사용
+import json
+import ssl
 
 # [라이브러리]
 import folium
 from streamlit_folium import st_folium
 import streamlit.components.v1 as components
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -116,10 +116,9 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # =========================================================
-# [설정] 인증키 (요청하신 초기 키로 복구)
+# [설정] 인증키 (요청하신 원본 키)
 # =========================================================
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
-# [사장님 요청: 원본 키 사용]
 VWORLD_KEY = "47B30ADD-AECB-38F3-B5B4-DD92CCA756C5"
 KAKAO_API_KEY = "2a3330b822a5933035eacec86061ee41"
 
@@ -132,31 +131,34 @@ if 'last_click_lat' not in st.session_state: st.session_state['last_click_lat'] 
 def reset_analysis():
     st.session_state['selling_summary'] = []
 
-# --- [네트워크 요청 함수 (단순화)] ---
-def create_session():
-    session = requests.Session()
-    # [수정] 헤더를 최소화하고 연결 끊김 방지
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0",
-        "Connection": "close"  # 중요: 연결을 유지하지 않고 바로 끊어서 에러 방지
-    })
-    return session
+# --- [네트워크 요청 함수 (URLLIB 사용)] ---
+# requests 라이브러리 대신 내장된 urllib을 사용하여 
+# 봇 차단을 우회하고 보안 검사를 강제로 끕니다.
+def fetch_url(url):
+    try:
+        context = ssl._create_unverified_context()
+        req = urllib.request.Request(
+            url, 
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        )
+        with urllib.request.urlopen(req, context=context, timeout=10) as response:
+            return response.read()
+    except Exception as e:
+        return None
 
 # --- [좌표 -> 주소 변환 함수] ---
 def get_address_from_coords(lat, lng):
-    # [수정] http 사용
-    url = "http://api.vworld.kr/req/address" 
-    params = {
-        "service": "address", "request": "getaddress", "version": "2.0", "crs": "EPSG:4326",
-        "point": f"{lng},{lat}", "type": "PARCEL", "format": "json", "errorformat": "json", "key": VWORLD_KEY
-    }
+    url = f"https://api.vworld.kr/req/address?service=address&request=getaddress&version=2.0&crs=EPSG:4326&point={lng},{lat}&type=PARCEL&format=json&errorformat=json&key={VWORLD_KEY}"
     try:
-        session = create_session()
-        response = session.get(url, params=params, timeout=5)
-        data = response.json()
-        if data.get('response', {}).get('status') == 'OK':
-            return data['response']['result'][0]['text']
-    except: return None
+        res_bytes = fetch_url(url)
+        if res_bytes:
+            data = json.loads(res_bytes)
+            if data.get('response', {}).get('status') == 'OK':
+                return data['response']['result'][0]['text']
+    except:
+        return None
     return None
 
 # --- [디자인 함수] ---
@@ -254,28 +256,26 @@ def generate_insight_summary(info, finance, zoning, env_features, user_comment, 
         
     return points[:6]
 
-# --- [데이터 조회 함수] ---
-# [중요] 캐시 제거 (매번 새로 시도하기 위해)
+# --- [데이터 조회 함수 (urllib 사용)] ---
+@st.cache_data(show_spinner=False)
 def get_pnu_and_coords(address):
-    # [수정] http 사용 & verify=False 삭제 (http엔 불필요)
-    url = "http://api.vworld.kr/req/search"
-    search_type = 'road' if '로' in address or '길' in address else 'parcel'
-    params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
+    # 주소 인코딩
+    enc_addr = quote_plus(address)
+    url = f"https://api.vworld.kr/req/search?service=search&request=search&version=2.0&crs=EPSG:4326&size=1&page=1&query={enc_addr}&type=address&category=road&format=json&errorformat=json&key={VWORLD_KEY}"
     
     try:
-        session = create_session()
-        # 타임아웃 10초로 넉넉하게
-        res = session.get(url, params=params, timeout=10)
-        data = res.json()
+        res_bytes = fetch_url(url)
+        if not res_bytes: return None
         
-        # [진단] 에러 시 메시지 출력
-        if data.get('response', {}).get('status') != 'OK' and data.get('response', {}).get('status') != 'NOT_FOUND':
-             st.error(f"⚠️ 서버 응답: {data}")
-
+        data = json.loads(res_bytes)
+        
+        # 못 찾으면 서울특별시 붙여서 재시도
         if data['response']['status'] == 'NOT_FOUND':
-            params['query'] = "서울특별시 " + address
-            res = session.get(url, params=params, timeout=10)
-            data = res.json()
+            enc_addr_seoul = quote_plus("서울특별시 " + address)
+            url2 = f"https://api.vworld.kr/req/search?service=search&request=search&version=2.0&crs=EPSG:4326&size=1&page=1&query={enc_addr_seoul}&type=address&category=road&format=json&errorformat=json&key={VWORLD_KEY}"
+            res_bytes2 = fetch_url(url2)
+            if res_bytes2:
+                data = json.loads(res_bytes2)
         
         if data['response']['status'] == 'NOT_FOUND': return None
         
@@ -290,20 +290,19 @@ def get_pnu_and_coords(address):
 
         return {"pnu": pnu, "lat": lat, "lng": lng, "full_addr": full_address}
     except Exception as e:
-        st.error(f"❌ 접속 오류: {e}")
+        st.error(f"검색 오류: {e}")
         return None
 
+@st.cache_data(show_spinner=False)
 def get_zoning_smart(lat, lng):
-    url = "http://api.vworld.kr/req/data"
     delta = 0.0005
     min_x, min_y = lng - delta, lat - delta
     max_x, max_y = lng + delta, lat + delta
-    params = {"service": "data", "request": "GetFeature", "data": "LT_C_UQ111", "key": VWORLD_KEY, "format": "json", "size": "10", "geomFilter": f"BOX({min_x},{min_y},{max_x},{max_y})", "domain": "localhost"}
+    url = f"https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_C_UQ111&key={VWORLD_KEY}&format=json&size=10&geomFilter=BOX({min_x},{min_y},{max_x},{max_y})&domain=localhost"
     try:
-        session = create_session()
-        res = session.get(url, params=params, timeout=5)
-        if res.status_code == 200:
-            data = res.json()
+        res_bytes = fetch_url(url)
+        if res_bytes:
+            data = json.loads(res_bytes)
             features = data.get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
             if features:
                 zonings = [f['properties']['UNAME'] for f in features]
@@ -311,33 +310,31 @@ def get_zoning_smart(lat, lng):
     except: pass
     return "직접입력"
 
+@st.cache_data(show_spinner=False)
 def get_land_price(pnu):
-    url = "http://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr"
     current_year = datetime.datetime.now().year
     years_to_check = range(current_year, current_year - 7, -1) 
-    session = create_session()
     for year in years_to_check:
-        params = {"serviceKey": USER_KEY, "pnu": pnu, "format": "xml", "numOfRows": "1", "pageNo": "1", "stdrYear": str(year)}
+        url = f"http://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr?serviceKey={USER_KEY}&pnu={pnu}&format=xml&numOfRows=1&pageNo=1&stdrYear={year}"
         try:
-            res = session.get(url, params=params, timeout=5)
-            if res.status_code == 200:
-                root = ET.fromstring(res.content)
+            res_bytes = fetch_url(url)
+            if res_bytes:
+                root = ET.fromstring(res_bytes)
                 if root.findtext('.//resultCode') == '00':
                     price_node = root.find('.//indvdLandPrice')
                     if price_node is not None and price_node.text: return int(price_node.text)
         except: continue
     return 0
 
+@st.cache_data(show_spinner=False)
 def get_building_info_smart(pnu):
-    base_url = "http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
     sigungu = pnu[0:5]; bjdong = pnu[5:10]; bun = pnu[11:15]; ji = pnu[15:19]
     plat_code = '1' if pnu[10] == '2' else '0'
-    params = {"serviceKey": USER_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat_code, "bun": bun, "ji": ji, "numOfRows": "1", "pageNo": "1"}
+    url = f"http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo?serviceKey={USER_KEY}&sigunguCd={sigungu}&bjdongCd={bjdong}&platGbCd={plat_code}&bun={bun}&ji={ji}&numOfRows=1&pageNo=1"
     try:
-        session = create_session()
-        res = session.get(base_url, params=params, timeout=5)
-        if res.status_code == 200: return parse_xml_response(res.content)
-        return {"error": f"서버 상태: {res.status_code}"}
+        res_bytes = fetch_url(url)
+        if res_bytes: return parse_xml_response(res_bytes)
+        return {"error": "데이터 없음"}
     except Exception as e: return {"error": str(e)}
 
 def parse_xml_response(content):
@@ -388,22 +385,18 @@ def get_cadastral_map_image(lat, lng):
     minx, miny = lng - delta, lat - delta
     maxx, maxy = lng + delta, lat + delta
     bbox = f"{minx},{miny},{maxx},{maxy}"
-    layer = "LP_PA_CBND_BUBUN"
-    url = f"http://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
+    url = f"https://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=LP_PA_CBND_BUBUN&STYLES=LP_PA_CBND_BUBUN&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
     try:
-        session = create_session()
-        res = session.get(url, timeout=5)
-        if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
+        res_bytes = fetch_url(url)
+        if res_bytes: return BytesIO(res_bytes)
     except: pass
     return None
 
 def get_static_map_image(lat, lng):
-    url = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        session = create_session()
-        res = session.get(url, timeout=5)
-        if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): 
-            return BytesIO(res.content)
+        res_bytes = fetch_url(url)
+        if res_bytes: return BytesIO(res_bytes)
     except: pass
     return None
 
@@ -655,12 +648,11 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     worksheet.merge_range('B23:E35', '', fmt_box)
     
     # 엑셀에도 VWorld 정적 지도 사용 (네이버 지도 정적 이미지는 유료일 수 있음)
-    # [수정] http 사용
-    map_img_xls = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    map_img_xls = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        res = requests.get(map_img_xls, timeout=3)
-        if res.status_code == 200:
-            worksheet.insert_image('B23', 'map.png', {'image_data': BytesIO(res.content), 'x_scale': 0.7, 'y_scale': 0.7})
+        req = urllib.request.Request(map_img_xls, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ssl._create_unverified_context(), timeout=5) as res:
+            worksheet.insert_image('B23', 'map.png', {'image_data': BytesIO(res.read()), 'x_scale': 0.7, 'y_scale': 0.7})
     except: pass
 
     worksheet.write('G5', '건물개요', fmt_header)
@@ -747,7 +739,6 @@ with st.expander("🗺 지도에서 직접 클릭하여 찾기 (Click)", expande
                 st.warning("⚠️ 주소를 찾을 수 없는 위치입니다.")
 
 # --- [주소 입력창] ---
-# [수정] PNU 입력창 제거하고 원상복구
 addr_input = st.text_input("주소 입력", placeholder="예: 강남구 논현동 254-4", key="addr", on_change=reset_analysis)
 
 if addr_input:
