@@ -1124,4 +1124,5 @@ if addr_input:
                 with c_xls:
                     st.write("##### 📥 엑셀 저장")
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
+
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
