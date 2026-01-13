@@ -13,15 +13,36 @@ from urllib.parse import quote_plus
 import time
 import urllib3
 import datetime
+import ssl
 # [라이브러리]
 import folium
 from streamlit_folium import st_folium
 import streamlit.components.v1 as components
 from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 from urllib3.util.retry import Retry
+from urllib3.util.ssl_ import create_urllib3_context
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# =========================================================
+# [핵심] 한국 공공데이터 서버 접속용 특수 어댑터 (이게 비기입니다)
+# =========================================================
+class DesAdapter(HTTPAdapter):
+    def init_poolmanager(self, connections, maxsize, block=False):
+        # 한국 공공기관 구형 서버 호환성을 위한 SSL 컨텍스트 생성
+        ctx = create_urllib3_context()
+        ctx.load_default_certs()
+        ctx.check_hostname = False
+        # 보안 레벨을 낮추어 구형 서버와 통신 허용 (SECLEVEL=1)
+        ctx.set_ciphers('DEFAULT@SECLEVEL=1')
+        self.poolmanager = PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            ssl_context=ctx
+        )
 
 # =========================================================
 # [설정] UI 및 스타일
@@ -129,9 +150,8 @@ st.markdown("""
 # =========================================================
 # [설정] 인증키 및 전역 변수 초기화
 # =========================================================
-# [수정] 401 에러 방지를 위해 Decoding Key 사용 (끝이 ==로 끝나는 것)
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
-# [사장님 VWorld 키]
+# [사장님의 새 VWorld 키]
 VWORLD_KEY = "4C3FCB47-0CA1-33F3-AE96-A990857D5902"
 KAKAO_API_KEY = "2a3330b822a5933035eacec86061ee41"
 
@@ -144,26 +164,23 @@ if 'last_click_lat' not in st.session_state: st.session_state['last_click_lat'] 
 def reset_analysis():
     st.session_state['selling_summary'] = []
 
-# --- [네트워크 요청 함수 (재시도 로직 포함)] ---
+# --- [네트워크 요청 함수 (특수 어댑터 적용)] ---
 def create_session():
     session = requests.Session()
-    # 재시도 횟수 증가
-    retry = Retry(connect=5, read=5, backoff_factor=1.0)
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
+    # 1. 특수 어댑터 장착
+    session.mount('https://', DesAdapter())
+    session.mount('http://', DesAdapter())
     
-    # [수정] http 통신을 위해 가장 단순한 헤더 사용
+    # 2. 브라우저인 척 위장
     session.headers.update({
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://share.streamlit.io" 
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://share.streamlit.io/"
     })
     return session
 
 # --- [좌표 -> 주소 변환 함수] ---
 def get_address_from_coords(lat, lng):
-    # [수정] https -> http (연결 끊김 방지)
-    url = "http://api.vworld.kr/req/address" 
+    url = "https://api.vworld.kr/req/address" 
     params = {
         "service": "address",
         "request": "getaddress",
@@ -177,7 +194,7 @@ def get_address_from_coords(lat, lng):
     }
     try:
         session = create_session()
-        response = session.get(url, params=params, timeout=10) # verify=False 제거 (http라 필요없음)
+        response = session.get(url, params=params, timeout=10, verify=False)
         data = response.json()
         if data.get('response', {}).get('status') == 'OK':
             return data['response']['result'][0]['text']
@@ -307,24 +324,23 @@ def generate_insight_summary(info, finance, zoning, env_features, user_comment, 
 # --- [데이터 조회 함수] ---
 @st.cache_data(show_spinner=False)
 def get_pnu_and_coords(address):
-    # [수정] https -> http (연결 끊김 방지)
-    url = "http://api.vworld.kr/req/search"
+    url = "https://api.vworld.kr/req/search"
     search_type = 'road' if '로' in address or '길' in address else 'parcel'
     params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
     
     try:
         session = create_session()
-        # [수정] http 사용하므로 verify=False 제거
-        res = session.get(url, params=params, timeout=10)
+        # [수정] 위장된 세션으로 요청 + https
+        res = session.get(url, params=params, timeout=10, verify=False)
         data = res.json()
         
-        # [🚨진단] 에러 메시지 출력 기능 추가
+        # [🚨진단] 에러 메시지 상세 출력
         if data.get('response', {}).get('status') != 'OK' and data.get('response', {}).get('status') != 'NOT_FOUND':
-             st.error(f"⚠️ 서버 응답 코드: {res.status_code}, 메시지: {data}")
+             st.error(f"⚠️ 서버 응답 내용: {data}")
 
         if data['response']['status'] == 'NOT_FOUND':
             params['query'] = "서울특별시 " + address
-            res = session.get(url, params=params, timeout=10)
+            res = session.get(url, params=params, timeout=10, verify=False)
             data = res.json()
         
         if data['response']['status'] == 'NOT_FOUND': return None
@@ -345,15 +361,14 @@ def get_pnu_and_coords(address):
 
 @st.cache_data(show_spinner=False)
 def get_zoning_smart(lat, lng):
-    # [수정] https -> http
-    url = "http://api.vworld.kr/req/data"
+    url = "https://api.vworld.kr/req/data"
     delta = 0.0005
     min_x, min_y = lng - delta, lat - delta
     max_x, max_y = lng + delta, lat + delta
     params = {"service": "data", "request": "GetFeature", "data": "LT_C_UQ111", "key": VWORLD_KEY, "format": "json", "size": "10", "geomFilter": f"BOX({min_x},{min_y},{max_x},{max_y})", "domain": "localhost"}
     try:
         session = create_session()
-        res = session.get(url, params=params, timeout=10)
+        res = session.get(url, params=params, timeout=10, verify=False)
         if res.status_code == 200:
             data = res.json()
             features = data.get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
@@ -365,7 +380,6 @@ def get_zoning_smart(lat, lng):
 
 @st.cache_data(show_spinner=False)
 def get_land_price(pnu):
-    # [수정] https -> http (공공데이터포털)
     url = "http://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr"
     current_year = datetime.datetime.now().year
     years_to_check = range(current_year, current_year - 7, -1) 
@@ -373,7 +387,7 @@ def get_land_price(pnu):
     for year in years_to_check:
         params = {"serviceKey": USER_KEY, "pnu": pnu, "format": "xml", "numOfRows": "1", "pageNo": "1", "stdrYear": str(year)}
         try:
-            res = session.get(url, params=params, timeout=5)
+            res = session.get(url, params=params, timeout=5, verify=False)
             if res.status_code == 200:
                 root = ET.fromstring(res.content)
                 if root.findtext('.//resultCode') == '00':
@@ -385,14 +399,13 @@ def get_land_price(pnu):
 
 @st.cache_data(show_spinner=False)
 def get_building_info_smart(pnu):
-    # [수정] https -> http (공공데이터포털)
-    base_url = "http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+    base_url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
     sigungu = pnu[0:5]; bjdong = pnu[5:10]; bun = pnu[11:15]; ji = pnu[15:19]
     plat_code = '1' if pnu[10] == '2' else '0'
     params = {"serviceKey": USER_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat_code, "bun": bun, "ji": ji, "numOfRows": "1", "pageNo": "1"}
     try:
         session = create_session()
-        res = session.get(base_url, params=params, timeout=10)
+        res = session.get(base_url, params=params, timeout=10, verify=False)
         if res.status_code == 200: return parse_xml_response(res.content)
         return {"error": f"서버 상태: {res.status_code}"}
     except Exception as e: return {"error": str(e)}
@@ -450,22 +463,20 @@ def get_cadastral_map_image(lat, lng):
     maxx, maxy = lng + delta, lat + delta
     bbox = f"{minx},{miny},{maxx},{maxy}"
     layer = "LP_PA_CBND_BUBUN"
-    # [수정] https -> http
-    url = f"http://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
+    url = f"https://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
     try:
         session = create_session()
-        res = session.get(url, timeout=10)
+        res = session.get(url, timeout=10, verify=False)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
     except: pass
     return None
 
 @st.cache_data(show_spinner=False)
 def get_static_map_image(lat, lng):
-    # [수정] https -> http
-    url = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
         session = create_session()
-        res = session.get(url, timeout=10)
+        res = session.get(url, timeout=10, verify=False)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): 
             return BytesIO(res.content)
     except: pass
@@ -719,11 +730,10 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     worksheet.merge_range('B23:E35', '', fmt_box)
     
     # 엑셀에도 VWorld 정적 지도 사용 (네이버 지도 정적 이미지는 유료일 수 있음)
-    # [수정] https -> http
-    map_img_xls = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    map_img_xls = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        # [수정] http 사용하므로 verify=False 제거
-        res = requests.get(map_img_xls, timeout=3)
+        # [수정] verify=False 추가
+        res = requests.get(map_img_xls, timeout=3, verify=False)
         if res.status_code == 200:
             worksheet.insert_image('B23', 'map.png', {'image_data': BytesIO(res.content), 'x_scale': 0.7, 'y_scale': 0.7})
     except: pass
