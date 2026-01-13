@@ -130,7 +130,7 @@ st.markdown("""
 # [설정] 인증키 및 전역 변수 초기화
 # =========================================================
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
-VWORLD_KEY = "47B30ADD-AECB-38F3-B5B4-DD92CCA756C5"
+VWORLD_KEY = "4C3FCB47-0CA1-33F3-AE96-A990857D5902"
 KAKAO_API_KEY = "2a3330b822a5933035eacec86061ee41"
 
 if 'zoning' not in st.session_state: st.session_state['zoning'] = ""
@@ -1159,3 +1159,4 @@ if addr_input:
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
 
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
