@@ -421,7 +421,7 @@ def get_cadastral_map_image(lat, lng):
 
 @st.cache_data(show_spinner=False)
 def get_static_map_image(lat, lng):
-    url = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
         res = requests.get(url, timeout=3)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): 
@@ -677,7 +677,7 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     worksheet.merge_range('B23:E35', '', fmt_box)
     
     # 엑셀에도 VWorld 정적 지도 사용 (네이버 지도 정적 이미지는 유료일 수 있음)
-    map_img_xls = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    map_img_xls = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
         res = requests.get(map_img_xls, timeout=3)
         if res.status_code == 200:
@@ -1126,4 +1126,5 @@ if addr_input:
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
 
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
 
