@@ -13,145 +13,59 @@ from urllib.parse import quote_plus
 import time
 import urllib3
 import datetime
-import ssl
 # [라이브러리]
 import folium
 from streamlit_folium import st_folium
 import streamlit.components.v1 as components
 from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
 from urllib3.util.retry import Retry
-from urllib3.util.ssl_ import create_urllib3_context
 
 # SSL 경고 비활성화
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # =========================================================
-# [핵심] 한국 공공데이터 서버 접속용 특수 어댑터 (이게 비기입니다)
-# =========================================================
-class DesAdapter(HTTPAdapter):
-    def init_poolmanager(self, connections, maxsize, block=False):
-        # 한국 공공기관 구형 서버 호환성을 위한 SSL 컨텍스트 생성
-        ctx = create_urllib3_context()
-        ctx.load_default_certs()
-        ctx.check_hostname = False
-        # 보안 레벨을 낮추어 구형 서버와 통신 허용 (SECLEVEL=1)
-        ctx.set_ciphers('DEFAULT@SECLEVEL=1')
-        self.poolmanager = PoolManager(
-            num_pools=connections,
-            maxsize=maxsize,
-            block=block,
-            ssl_context=ctx
-        )
-
-# =========================================================
 # [설정] UI 및 스타일
 # =========================================================
-st.set_page_config(page_title="부동산 원클릭 분석 Pro", page_icon="🏢", layout="centered")
+st.set_page_config(page_title="부동산 원클릭 분석 Pro", page_icon="🏢", layout="wide")
 
 st.markdown("""
     <style>
         .block-container {
             max-width: 1000px; 
-            padding-top: 3rem; 
+            padding-top: 2rem; 
             padding-bottom: 2rem;
-            padding-left: 2rem;
-            padding-right: 2rem;
         }
-        
-        button[data-testid="stNumberInputStepDown"],
-        button[data-testid="stNumberInputStepUp"] { display: none !important; }
-        .stNumberInput label { display: none; }
-        
         input[type="text"] { 
             text-align: right !important; 
-            font-size: 24px !important; 
-            font-weight: 800 !important;
-            font-family: 'Pretendard', sans-serif;
-            color: #333 !important;
-            padding-right: 10px !important;
+            font-size: 20px !important; 
+            font-weight: 700 !important;
         }
-
         div[data-testid="stTextInput"] input[aria-label="주소 입력"] {
             text-align: left !important;
-            font-size: 18px !important;
-            font-weight: 600 !important;
         }
-
-        input[aria-label="매매금액"] {
-             color: #D32F2F !important; 
-             font-size: 32px !important; 
-        }
-
-        .stButton > button {
-            width: 100%;
-            background-color: #1a237e;
-            color: white;
-            font-size: 18px;
-            font-weight: bold;
-            padding: 14px;
-            border-radius: 8px;
-            border: none;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-            transition: all 0.3s;
-        }
-        .stButton > button:hover {
-            background-color: #0d47a1;
-            transform: translateY(-2px);
-        }
-        
         .unit-price-box {
             background-color: #f5f5f5;
             border: 1px solid #e0e0e0;
-            padding: 15px;
+            padding: 10px;
             border-radius: 8px;
-            margin-top: 10px;
             text-align: center;
         }
         .unit-price-value {
-            font-size: 28px; 
-            font-weight: 900; 
-            color: #111;
+            font-size: 24px; font-weight: 800; color: #111;
         }
-        
-        .ai-summary-box {
-            background-color: #fff;
-            border: 1px solid #ddd;
-            border-top: 4px solid #1a237e;
-            padding: 30px;
-            border-radius: 5px;
-            margin-top: 20px;
-            text-align: left;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+        .status-box-ok {
+            padding: 10px; border-radius: 5px; background-color: #e8f5e9; color: #2e7d32; font-weight: bold; margin-bottom: 5px;
         }
-        .ai-title {
-            font-size: 24px;
-            font-weight: 800;
-            color: #1a237e;
-            margin-bottom: 25px;
-            border-bottom: 2px solid #eee;
-            padding-bottom: 15px;
-            letter-spacing: -0.5px;
-        }
-        .insight-item {
-            margin-bottom: 18px;
-            font-size: 17px;
-            line-height: 1.7;
-            color: #424242;
-        }
-        .insight-label {
-            font-weight: 700;
-            color: #1565C0;
-            margin-right: 8px;
+        .status-box-fail {
+            padding: 10px; border-radius: 5px; background-color: #ffebee; color: #c62828; font-weight: bold; margin-bottom: 5px;
         }
     </style>
     """, unsafe_allow_html=True)
 
 # =========================================================
-# [설정] 인증키 및 전역 변수 초기화
+# [설정] 인증키 (사장님 키 적용됨)
 # =========================================================
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
-# [사장님의 새 VWorld 키]
 VWORLD_KEY = "4C3FCB47-0CA1-33F3-AE96-A990857D5902"
 KAKAO_API_KEY = "2a3330b822a5933035eacec86061ee41"
 
@@ -164,82 +78,91 @@ if 'last_click_lat' not in st.session_state: st.session_state['last_click_lat'] 
 def reset_analysis():
     st.session_state['selling_summary'] = []
 
-# --- [네트워크 요청 함수 (특수 어댑터 적용)] ---
+# --- [네트워크 요청 함수 (강력한 재시도)] ---
 def create_session():
     session = requests.Session()
-    # 1. 특수 어댑터 장착
-    session.mount('https://', DesAdapter())
-    session.mount('http://', DesAdapter())
-    
-    # 2. 브라우저인 척 위장
+    retry = Retry(connect=3, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    # 일반 브라우저처럼 위장
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://share.streamlit.io/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36",
+        "Referer": "https://share.streamlit.io"
     })
     return session
 
+# --- [진단 기능] ---
+def check_connection():
+    st.sidebar.header("🔌 서버 연결 상태 진단")
+    
+    # 1. 브이월드 체크
+    try:
+        session = create_session()
+        # 가벼운 요청으로 테스트
+        url = "http://api.vworld.kr/req/search?service=search&request=search&version=2.0&crs=EPSG:4326&size=1&page=1&query=강남구&type=address&category=road&format=json&errorformat=json&key=" + VWORLD_KEY
+        res = session.get(url, timeout=5)
+        if res.status_code == 200 and 'response' in res.json():
+            st.sidebar.markdown('<div class="status-box-ok">✅ 브이월드(지도): 정상</div>', unsafe_allow_html=True)
+        else:
+            st.sidebar.markdown(f'<div class="status-box-fail">❌ 브이월드: 차단됨 ({res.status_code})</div>', unsafe_allow_html=True)
+            st.sidebar.info("💡 해결책: 브이월드 개발자센터 > 인증키 관리 > 활용 URL에 'https://share.streamlit.io'가 등록되었는지 확인하세요.")
+    except Exception as e:
+        st.sidebar.markdown(f'<div class="status-box-fail">❌ 브이월드: 연결 불가<br><span style="font-size:10px">{str(e)[:50]}...</span></div>', unsafe_allow_html=True)
+
+    # 2. 공공데이터포털 체크
+    try:
+        url2 = "http://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr?serviceKey=" + USER_KEY + "&pnu=1168010100108080005&format=xml&numOfRows=1&pageNo=1&stdrYear=2023"
+        res2 = requests.get(url2, timeout=5)
+        if res2.status_code == 200:
+            st.sidebar.markdown('<div class="status-box-ok">✅ 공공데이터(대장): 정상</div>', unsafe_allow_html=True)
+        else:
+            st.sidebar.markdown(f'<div class="status-box-fail">❌ 공공데이터: 오류 ({res2.status_code})</div>', unsafe_allow_html=True)
+    except:
+        st.sidebar.markdown('<div class="status-box-fail">❌ 공공데이터: 연결 불가</div>', unsafe_allow_html=True)
+
+# 메인 실행 시 진단 수행
+check_connection()
+
 # --- [좌표 -> 주소 변환 함수] ---
 def get_address_from_coords(lat, lng):
-    url = "https://api.vworld.kr/req/address" 
+    url = "http://api.vworld.kr/req/address" 
     params = {
-        "service": "address",
-        "request": "getaddress",
-        "version": "2.0",
-        "crs": "EPSG:4326",
-        "point": f"{lng},{lat}", 
-        "type": "PARCEL", 
-        "format": "json",
-        "errorformat": "json",
-        "key": VWORLD_KEY
+        "service": "address", "request": "getaddress", "version": "2.0", "crs": "EPSG:4326",
+        "point": f"{lng},{lat}", "type": "PARCEL", "format": "json", "errorformat": "json", "key": VWORLD_KEY
     }
     try:
         session = create_session()
-        response = session.get(url, params=params, timeout=10, verify=False)
+        response = session.get(url, params=params, timeout=5)
         data = response.json()
         if data.get('response', {}).get('status') == 'OK':
             return data['response']['result'][0]['text']
-    except:
-        return None
+    except: return None
     return None
 
 # --- [디자인 함수] ---
 def render_styled_block(label, value, is_area=False):
     st.markdown(f"""
     <div style="margin-bottom: 10px;">
-        <div style="font-size: 16px; color: #666; font-weight: 600; margin-bottom: 2px;">{label}</div>
-        <div style="font-size: 24px; font-weight: 800; color: #111; line-height: 1.2;">{value}</div>
+        <div style="font-size: 14px; color: #666; font-weight: 600;">{label}</div>
+        <div style="font-size: 20px; font-weight: 800; color: #111;">{value}</div>
     </div>
     """, unsafe_allow_html=True)
 
-# [유지] 0일 경우 빈칸으로 표시하는 comma_input 함수
 def comma_input(label, unit, key, default_val, help_text=""):
-    st.markdown(f"""
-        <div style='font-size: 16px; font-weight: 700; color: #333; margin-bottom: 4px;'>
-            {label} <span style='font-size:12px; color:#888; font-weight:400;'>{help_text}</span>
-        </div>
-    """, unsafe_allow_html=True)
-    
     c_in, c_unit = st.columns([3, 1]) 
     with c_in:
-        if key not in st.session_state:
-            st.session_state[key] = default_val
+        if key not in st.session_state: st.session_state[key] = default_val
         current_val = st.session_state[key]
-        
-        # 값이 0이면 빈 문자열로 표시, 아니면 콤마 포맷
         formatted_val = f"{current_val:,}" if current_val != 0 else ""
-        
-        val_input = st.text_input(label, value=formatted_val, key=f"{key}_widget", label_visibility="hidden")
+        val_input = st.text_input(label, value=formatted_val, key=f"{key}_widget")
         try:
-            if val_input.strip() == "":
-                new_val = 0
-            else:
-                new_val = int(str(val_input).replace(',', '').strip())
+            if val_input.strip() == "": new_val = 0
+            else: new_val = int(str(val_input).replace(',', '').strip())
             st.session_state[key] = new_val
-        except:
-            new_val = 0
-            
+        except: new_val = 0
     with c_unit:
-        st.markdown(f"<div style='margin-top: 15px; font-size: 18px; font-weight: 600; color: #555;'>{unit}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-top: 32px; font-weight: bold;'>{unit}</div>", unsafe_allow_html=True)
     return new_val
 
 # --- [보조 함수] ---
@@ -266,10 +189,7 @@ def format_area_ppt(val_str):
 # --- [AI 인사이트 생성] ---
 def generate_insight_summary(info, finance, zoning, env_features, user_comment, comp_df=None, target_dong=""):
     points = []
-    
-    if user_comment:
-        clean_comment = user_comment.replace("\n", " ").strip()
-        points.append(clean_comment)
+    if user_comment: points.append(user_comment.replace("\n", " ").strip())
 
     if comp_df is not None and not comp_df.empty:
         try:
@@ -279,22 +199,18 @@ def generate_insight_summary(info, finance, zoning, env_features, user_comment, 
                 my_price = finance['land_pyeong_price_val'] 
                 diff = my_price - avg_price
                 diff_pct = abs(diff / avg_price) * 100
-                max_price = sold_df['평당가'].max()
                 loc_prefix = f"{target_dong} " if target_dong else "인근 "
 
                 if diff < 0:
                     points.append(f"✅ {loc_prefix}매각 사례 평균(평당 {avg_price:,.0f}만) 대비 {diff_pct:.1f}% 저렴")
-                    points.append(f"{loc_prefix}최고 실거래가(평당 {max_price:,.0f}만) 대비 확실한 가격 메리트")
                 elif diff == 0:
                      points.append(f"{loc_prefix}실거래 시세(평당 {avg_price:,.0f}만)와 동일한 적정 시세")
                 else:
                     points.append(f"{loc_prefix}평균 시세 상회하나, {zoning} 및 신축급 가치 반영 필요")
-                
                 points.append(f"📊 {loc_prefix}유사 입지 {len(sold_df)}건의 실거래 데이터 정밀 분석 결과")
             else:
                 points.append(f"{target_dong} 인근 매각 완료 사례 없음 (진행 중 매물만 존재)")
-        except Exception as e:
-            pass
+        except: pass
     elif comp_df is not None and comp_df.empty:
         points.append(f"⚠️ 업로드된 데이터에서 '{target_dong}' 관련 매매 사례를 찾을 수 없습니다.")
 
@@ -305,42 +221,33 @@ def generate_insight_summary(info, finance, zoning, env_features, user_comment, 
         points.append("역세권 및 대로변을 낀 탁월한 접근성과 가시성")
 
     yield_val = finance['yield']
-    if yield_val >= 3.0:
-        points.append(f"연 {yield_val:.1f}%의 안정적인 고수익과 탄탄한 임차 구성")
-    else:
-        points.append(f"공실 걱정 없는 안정적 임대 수익 및 높은 환금성")
+    if yield_val >= 3.0: points.append(f"연 {yield_val:.1f}%의 안정적인 고수익과 탄탄한 임차 구성")
+    else: points.append(f"공실 걱정 없는 안정적 임대 수익 및 높은 환금성")
 
     year = int(info['useAprDay'][:4]) if info.get('useAprDay') else 0
     age = datetime.datetime.now().year - year
-    if age < 5:
-        points.append("신축급 최상의 내외관 컨디션으로 즉시 수익 창출")
-    elif age > 20:
-        points.append("향후 리모델링 및 신축 개발 시 시세 차익 극대화")
-    else:
-        points.append("우수한 관리 상태로 추가 비용 없는 효율적 운영")
+    if age < 5: points.append("신축급 최상의 내외관 컨디션으로 즉시 수익 창출")
+    elif age > 20: points.append("향후 리모델링 및 신축 개발 시 시세 차익 극대화")
+    else: points.append("우수한 관리 상태로 추가 비용 없는 효율적 운영")
         
     return points[:6]
 
 # --- [데이터 조회 함수] ---
 @st.cache_data(show_spinner=False)
 def get_pnu_and_coords(address):
-    url = "https://api.vworld.kr/req/search"
+    # http 사용 (보안 접속 해제)
+    url = "http://api.vworld.kr/req/search"
     search_type = 'road' if '로' in address or '길' in address else 'parcel'
     params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
     
     try:
         session = create_session()
-        # [수정] 위장된 세션으로 요청 + https
-        res = session.get(url, params=params, timeout=10, verify=False)
+        res = session.get(url, params=params, timeout=10)
         data = res.json()
         
-        # [🚨진단] 에러 메시지 상세 출력
-        if data.get('response', {}).get('status') != 'OK' and data.get('response', {}).get('status') != 'NOT_FOUND':
-             st.error(f"⚠️ 서버 응답 내용: {data}")
-
         if data['response']['status'] == 'NOT_FOUND':
             params['query'] = "서울특별시 " + address
-            res = session.get(url, params=params, timeout=10, verify=False)
+            res = session.get(url, params=params, timeout=10)
             data = res.json()
         
         if data['response']['status'] == 'NOT_FOUND': return None
@@ -356,19 +263,19 @@ def get_pnu_and_coords(address):
 
         return {"pnu": pnu, "lat": lat, "lng": lng, "full_addr": full_address}
     except Exception as e:
-        st.error(f"❌ 연결 오류: {e}")
+        st.error(f"❌ 검색 오류: {e}")
         return None
 
 @st.cache_data(show_spinner=False)
 def get_zoning_smart(lat, lng):
-    url = "https://api.vworld.kr/req/data"
+    url = "http://api.vworld.kr/req/data"
     delta = 0.0005
     min_x, min_y = lng - delta, lat - delta
     max_x, max_y = lng + delta, lat + delta
     params = {"service": "data", "request": "GetFeature", "data": "LT_C_UQ111", "key": VWORLD_KEY, "format": "json", "size": "10", "geomFilter": f"BOX({min_x},{min_y},{max_x},{max_y})", "domain": "localhost"}
     try:
         session = create_session()
-        res = session.get(url, params=params, timeout=10, verify=False)
+        res = session.get(url, params=params, timeout=10)
         if res.status_code == 200:
             data = res.json()
             features = data.get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
@@ -387,25 +294,24 @@ def get_land_price(pnu):
     for year in years_to_check:
         params = {"serviceKey": USER_KEY, "pnu": pnu, "format": "xml", "numOfRows": "1", "pageNo": "1", "stdrYear": str(year)}
         try:
-            res = session.get(url, params=params, timeout=5, verify=False)
+            res = session.get(url, params=params, timeout=5)
             if res.status_code == 200:
                 root = ET.fromstring(res.content)
                 if root.findtext('.//resultCode') == '00':
                     price_node = root.find('.//indvdLandPrice')
                     if price_node is not None and price_node.text: return int(price_node.text)
         except: continue
-        time.sleep(0.05)
     return 0
 
 @st.cache_data(show_spinner=False)
 def get_building_info_smart(pnu):
-    base_url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+    base_url = "http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
     sigungu = pnu[0:5]; bjdong = pnu[5:10]; bun = pnu[11:15]; ji = pnu[15:19]
     plat_code = '1' if pnu[10] == '2' else '0'
     params = {"serviceKey": USER_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat_code, "bun": bun, "ji": ji, "numOfRows": "1", "pageNo": "1"}
     try:
         session = create_session()
-        res = session.get(base_url, params=params, timeout=10, verify=False)
+        res = session.get(base_url, params=params, timeout=10)
         if res.status_code == 200: return parse_xml_response(res.content)
         return {"error": f"서버 상태: {res.status_code}"}
     except Exception as e: return {"error": str(e)}
@@ -419,14 +325,11 @@ def parse_xml_response(content):
         indr_mech = int(item.findtext('indrMechUtcnt', '0') or 0)
         indr_auto = int(item.findtext('indrAutoUtcnt', '0') or 0)
         total_indoor = indr_mech + indr_auto
-
         oudr_mech = int(item.findtext('oudrMechUtcnt', '0') or 0)
         oudr_auto = int(item.findtext('oudrAutoUtcnt', '0') or 0)
         total_outdoor = oudr_mech + oudr_auto
-        
         total_parking = total_indoor + total_outdoor
         parking_str = f"{total_parking}대(옥내{total_indoor}/옥외{total_outdoor})"
-
         ride_elvt = int(item.findtext('rideUseElvtCnt', '0') or 0)
         emgen_elvt = int(item.findtext('emgenUseElvtCnt', '0') or 0)
         total_elvt = ride_elvt + emgen_elvt
@@ -463,20 +366,20 @@ def get_cadastral_map_image(lat, lng):
     maxx, maxy = lng + delta, lat + delta
     bbox = f"{minx},{miny},{maxx},{maxy}"
     layer = "LP_PA_CBND_BUBUN"
-    url = f"https://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
+    url = f"http://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
     try:
         session = create_session()
-        res = session.get(url, timeout=10, verify=False)
+        res = session.get(url, timeout=10)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
     except: pass
     return None
 
 @st.cache_data(show_spinner=False)
 def get_static_map_image(lat, lng):
-    url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    url = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
         session = create_session()
-        res = session.get(url, timeout=10, verify=False)
+        res = session.get(url, timeout=10)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): 
             return BytesIO(res.content)
     except: pass
@@ -730,10 +633,9 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     worksheet.merge_range('B23:E35', '', fmt_box)
     
     # 엑셀에도 VWorld 정적 지도 사용 (네이버 지도 정적 이미지는 유료일 수 있음)
-    map_img_xls = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    map_img_xls = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        # [수정] verify=False 추가
-        res = requests.get(map_img_xls, timeout=3, verify=False)
+        res = requests.get(map_img_xls, timeout=3)
         if res.status_code == 200:
             worksheet.insert_image('B23', 'map.png', {'image_data': BytesIO(res.content), 'x_scale': 0.7, 'y_scale': 0.7})
     except: pass
@@ -822,14 +724,23 @@ with st.expander("🗺 지도에서 직접 클릭하여 찾기 (Click)", expande
                 st.warning("⚠️ 주소를 찾을 수 없는 위치입니다.")
 
 # --- [주소 입력창] ---
-addr_input = st.text_input("주소 입력", placeholder="예: 강남구 논현동 254-4", key="addr", on_change=reset_analysis)
+# 수동 PNU 입력 추가
+c_addr, c_pnu = st.columns([3, 1])
+with c_addr:
+    addr_input = st.text_input("주소 입력", placeholder="예: 강남구 논현동 254-4", key="addr", on_change=reset_analysis)
+with c_pnu:
+    manual_pnu = st.text_input("PNU(주소검색실패시)", placeholder="고유번호 19자리", help="주소 검색이 안될 때 PNU 코드를 직접 입력하세요.")
 
-if addr_input:
+if addr_input or (manual_pnu and len(manual_pnu) == 19):
     with st.spinner("데이터 분석 중..."):
-        location = get_pnu_and_coords(addr_input)
+        # 1. PNU가 있으면 그걸 우선 사용
+        if manual_pnu and len(manual_pnu) == 19:
+            location = {"pnu": manual_pnu, "lat": 37.5, "lng": 127.0, "full_addr": "PNU 직접입력"} # 좌표는 임시
+        else:
+            location = get_pnu_and_coords(addr_input)
         
         if not location:
-            st.error("❌ 주소를 찾을 수 없습니다.")
+            st.error("❌ 주소를 찾을 수 없습니다. (PNU 코드를 직접 입력해보세요)")
         else:
             if not st.session_state['zoning']:
                 fetched_zoning = get_zoning_smart(location['lat'], location['lng'])
@@ -853,7 +764,7 @@ if addr_input:
                 st.markdown("""<div style="background-color: #f8f9fa; padding: 50px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">""", unsafe_allow_html=True)
                 
                 c1, c2 = st.columns([2, 1])
-                with c1: render_styled_block("소재지", addr_input)
+                with c1: render_styled_block("소재지", addr_input if addr_input else "PNU 검색")
                 with c2: render_styled_block("건물명", info.get('bldNm'))
                 st.write("") 
 
