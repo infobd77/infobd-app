@@ -142,7 +142,7 @@ def create_session():
     adapter = HTTPAdapter(max_retries=retry)
     session.mount('http://', adapter)
     session.mount('https://', adapter)
-     
+      
     # [핵심] 모바일 폰인척 위장하여 차단 회피 시도
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36",
@@ -260,7 +260,7 @@ def generate_insight_summary(info, finance, zoning, env_features, user_comment, 
     if age < 5: points.append("신축급 최상의 내외관 컨디션으로 즉시 수익 창출")
     elif age > 20: points.append("향후 리모델링 및 신축 개발 시 시세 차익 극대화")
     else: points.append("우수한 관리 상태로 추가 비용 없는 효율적 운영")
-         
+          
     return points[:6]
 
 # --- [데이터 조회 함수] ---
@@ -270,13 +270,13 @@ def get_pnu_and_coords(address):
     url = "https://api.vworld.kr/req/search"
     search_type = 'road' if '로' in address or '길' in address else 'parcel'
     params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
-     
+      
     try:
         session = create_session()
         # [수정] verify=False로 보안 통과 시도
         res = session.get(url, params=params, timeout=10, verify=False)
         data = res.json()
-         
+          
         # [🚨진단] 에러 메시지를 화면에 보여주기 (문제가 뭔지 보기 위해)
         if data.get('response', {}).get('status') != 'OK' and data.get('response', {}).get('status') != 'NOT_FOUND':
              st.error(f"⚠️ 브이월드 서버 응답: {data}")
@@ -285,14 +285,14 @@ def get_pnu_and_coords(address):
             params['query'] = "서울특별시 " + address
             res = session.get(url, params=params, timeout=10, verify=False)
             data = res.json()
-         
+          
         if data['response']['status'] == 'NOT_FOUND': return None
-         
+          
         item = data['response']['result']['items'][0]
         pnu = item.get('address', {}).get('pnu') or item.get('id')
         lng = float(item['point']['x'])
         lat = float(item['point']['y'])
-         
+          
         full_address = item.get('address', {}).get('parcel', '') 
         if not full_address: full_address = item.get('address', {}).get('road', '') 
         if not full_address: full_address = address
@@ -323,14 +323,16 @@ def get_zoning_smart(lat, lng):
 
 @st.cache_data(show_spinner=False)
 def get_land_price(pnu):
-    url = "http://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr"
+    # [수정] https로 변경
+    url = "https://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr"
     current_year = datetime.datetime.now().year
     years_to_check = range(current_year, current_year - 7, -1) 
     session = create_session()
     for year in years_to_check:
         params = {"serviceKey": USER_KEY, "pnu": pnu, "format": "xml", "numOfRows": "1", "pageNo": "1", "stdrYear": str(year)}
         try:
-            res = session.get(url, params=params, timeout=5)
+            # [수정] verify=False 추가
+            res = session.get(url, params=params, timeout=5, verify=False)
             if res.status_code == 200:
                 root = ET.fromstring(res.content)
                 if root.findtext('.//resultCode') == '00':
@@ -342,13 +344,15 @@ def get_land_price(pnu):
 
 @st.cache_data(show_spinner=False)
 def get_building_info_smart(pnu):
-    base_url = "http://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+    # [수정] https로 변경
+    base_url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
     sigungu = pnu[0:5]; bjdong = pnu[5:10]; bun = pnu[11:15]; ji = pnu[15:19]
     plat_code = '1' if pnu[10] == '2' else '0'
     params = {"serviceKey": USER_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat_code, "bun": bun, "ji": ji, "numOfRows": "1", "pageNo": "1"}
     try:
         session = create_session()
-        res = session.get(base_url, params=params, timeout=5)
+        # [수정] verify=False 추가
+        res = session.get(base_url, params=params, timeout=5, verify=False)
         if res.status_code == 200: return parse_xml_response(res.content)
         return {"error": f"서버 상태: {res.status_code}"}
     except Exception as e: return {"error": str(e)}
@@ -358,7 +362,7 @@ def parse_xml_response(content):
         root = ET.fromstring(content)
         item = root.find('.//item')
         if item is None: return None
-         
+          
         indr_mech = int(item.findtext('indrMechUtcnt', '0') or 0)
         indr_auto = int(item.findtext('indrAutoUtcnt', '0') or 0)
         total_indoor = indr_mech + indr_auto
@@ -371,7 +375,7 @@ def parse_xml_response(content):
         emgen_elvt = int(item.findtext('emgenUseElvtCnt', '0') or 0)
         total_elvt = ride_elvt + emgen_elvt
         elvt_str = f"{total_elvt}대"
-         
+          
         return {
             "bldNm": item.findtext('bldNm', '-'),
             "mainPurpsCdNm": item.findtext('mainPurpsCdNm', '정보없음'),
@@ -432,13 +436,13 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
     title_box.fill.background()
     title_box.line.color.rgb = RGBColor(200, 200, 200)
     title_box.line.width = Pt(1)
-     
+      
     tf = title_box.text_frame
     bld_name = info.get('bldNm')
     if not bld_name or bld_name == '-':
         dong = full_addr.split(' ')[2] if len(full_addr.split(' ')) > 2 else ""
         bld_name = f"{dong} 빌딩" if dong else "사옥용 빌딩"
-         
+          
     tf.text = bld_name
     p = tf.paragraphs[0]
     p.font.size = Pt(28)
@@ -448,13 +452,13 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
     p.alignment = PP_ALIGN.CENTER
 
     # === 4단 배치 ===
-     
+      
     # 1단 [건물 사진] Y=3.5, H=11.5
     img_y = Cm(3.5)
     img_h = Cm(11.5)
     left_x = Cm(1.0)
     col_w = Cm(9.2)
-     
+      
     lbl_img = slide.shapes.add_textbox(left_x, img_y - Cm(0.6), col_w, Cm(0.6))
     lbl_img.text_frame.text = "건물사진"
     lbl_img.text_frame.paragraphs[0].font.size = Pt(12) 
@@ -466,7 +470,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
     else:
         box = slide.shapes.add_textbox(left_x, img_y, col_w, img_h)
         box.text_frame.text = "" 
-     
+      
     rect_img = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left_x, img_y, col_w, img_h)
     rect_img.fill.background()
     rect_img.line.color.rgb = RGBColor(200, 200, 200)
@@ -484,7 +488,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
 
     map_img = get_static_map_image(lat, lng)
     if map_img: slide.shapes.add_picture(map_img, left_x, map_y, width=col_w, height=map_h)
-     
+      
     rect_map = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left_x, map_y, col_w, map_h)
     rect_map.fill.background()
     rect_map.line.color.rgb = RGBColor(200, 200, 200)
@@ -494,11 +498,11 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
     # [우측 열]
     # ====================================================
     right_x = Cm(10.8)
-     
+      
     # 2. 건물개요 표 Y=3.5, H=11.5
     tbl_y = Cm(3.5)
     tbl_h = Cm(11.5)
-     
+      
     lbl_tbl = slide.shapes.add_textbox(right_x, tbl_y - Cm(0.6), col_w, Cm(0.6))
     lbl_tbl.text_frame.text = "건물개요"
     lbl_tbl.text_frame.paragraphs[0].alignment = PP_ALIGN.LEFT
@@ -508,7 +512,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
 
     shape = slide.shapes.add_table(11, 4, right_x, tbl_y, col_w, tbl_h)
     table = shape.table
-     
+      
     table.columns[0].width = Cm(2.3)
     table.columns[1].width = Cm(2.3)
     table.columns[2].width = Cm(2.3)
@@ -536,7 +540,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
             cell = table.cell(r, c)
             cell.text = str(data[r][c])
             cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-             
+              
             for paragraph in cell.text_frame.paragraphs:
                 paragraph.alignment = PP_ALIGN.CENTER
                 paragraph.font.name = "맑은 고딕"
@@ -569,7 +573,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
                 for p in cell.text_frame.paragraphs:
                     p.font.color.rgb = RGBColor(255, 0, 0)
                     p.font.size = Pt(16)
-     
+      
     cell_addr = table.cell(0, 1)
     cell_addr.merge(table.cell(0, 3))
 
@@ -585,7 +589,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
 
     cad_img = get_cadastral_map_image(lat, lng)
     if cad_img: slide.shapes.add_picture(cad_img, right_x, cad_y, width=col_w, height=cad_h)
-     
+      
     rect_cad = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, right_x, cad_y, col_w, cad_h)
     rect_cad.fill.background()
     rect_cad.line.color.rgb = RGBColor(200, 200, 200)
@@ -605,11 +609,11 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
     rect_ai.fill.background()
     rect_ai.line.color.rgb = RGBColor(200, 200, 200)
     rect_ai.line.width = Pt(1)
-     
+      
     tx_ai = slide.shapes.add_textbox(right_x + Cm(0.1), ai_y + Cm(0.1), col_w - Cm(0.2), ai_h - Cm(0.2))
     tf_ai = tx_ai.text_frame
     tf_ai.word_wrap = True
-     
+      
     if selling_points:
         summary_text = ""
         for idx, pt in enumerate(selling_points[:5]):
@@ -618,7 +622,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
         tf_ai.text = summary_text
     else:
         tf_ai.text = "• 역세권 입지로 투자가치 우수\n• 안정적인 임대 수익 기대"
-     
+      
     for p in tf_ai.paragraphs: 
         p.font.size = Pt(10)
         p.space_after = Pt(5)
@@ -639,7 +643,7 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     output = BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     worksheet = workbook.add_worksheet('부동산분석')
-     
+      
     fmt_title = workbook.add_format({'bold': True, 'font_size': 20, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#EAEAEA'})
     fmt_label = workbook.add_format({'bold': True, 'font_size': 11, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#F0F8FF'}) 
     fmt_val = workbook.add_format({'bold': True, 'font_size': 11, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'text_wrap': True})
@@ -666,8 +670,9 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
 
     worksheet.write('B22', '위치도', fmt_header)
     worksheet.merge_range('B23:E35', '', fmt_box)
-     
+      
     # 엑셀에도 VWorld 정적 지도 사용 (네이버 지도 정적 이미지는 유료일 수 있음)
+    # [수정] https로 변경
     map_img_xls = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
         # [수정] verify=False 추가
@@ -677,10 +682,10 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     except: pass
 
     worksheet.write('G5', '건물개요', fmt_header)
-     
+      
     lp_py = (land_price / 10000) / 0.3025 if land_price > 0 else 0
     bcvl_text = f"{info['bcRat']:.2f}%\n{info['vlRat']:.2f}%"
-     
+      
     table_data_xls = [
         ["소재지", full_addr, "용도", zoning],
         ["공시지가", f"{lp_py:,.0f}만/평", "대지", info['platArea_ppt']], 
@@ -702,7 +707,7 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
              worksheet.merge_range(start_row + i, 7, start_row + i, 9, row[1], fmt_val_red)
         else:
              worksheet.write(start_row + i, 7, row[1], fmt_val) 
-         
+          
         if row[0] != "매도가":
             worksheet.write(start_row + i, 8, row[2], fmt_label) 
             worksheet.write(start_row + i, 9, row[3], fmt_val) 
@@ -715,7 +720,7 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
 
     worksheet.write('G28', '건물특징', fmt_header)
     worksheet.merge_range('G29:J35', '', fmt_box)
-     
+      
     summary_text = ""
     if selling_points:
         for idx, pt in enumerate(selling_points[:5]):
@@ -723,7 +728,7 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
             summary_text += f"• {clean}\n"
     else:
         summary_text = "• 역세권 입지로 투자가치 우수\n• 안정적인 임대 수익 기대"
-         
+          
     worksheet.write('G29', summary_text, fmt_box)
 
     worksheet.merge_range('B37:J37', "JS 제이에스부동산(주) 김창익 이사 010-6595-5700", fmt_title)
@@ -805,7 +810,7 @@ if addr_input:
 
                 # [건물 및 토지 정보]
                 st.markdown("""<div style="background-color: #f8f9fa; padding: 50px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">""", unsafe_allow_html=True)
-                 
+                  
                 c1, c2 = st.columns([2, 1])
                 with c1: render_styled_block("소재지", addr_input)
                 with c2: render_styled_block("건물명", info.get('bldNm'))
@@ -840,10 +845,10 @@ if addr_input:
                         st.session_state['zoning'] = zoning_manual 
                     else:
                         render_styled_block("용도지역", st.session_state['zoning'])
-                         
+                          
                 with c2_2: 
                     render_styled_block("대지면적", info['platArea_html'], is_area=True)
-                         
+                          
                 with c2_3: render_styled_block("연면적", info['totArea_html'], is_area=True)
                 st.write("")
 
@@ -858,12 +863,12 @@ if addr_input:
                 with c4_2: render_styled_block("승강기/주차", f"{info.get('rideUseElvtCnt')} / {info.get('parking')}")
                 with c4_3: render_styled_block("건폐/용적", f"{info.get('bcRat')}% / {info.get('vlRat')}%")
                 st.write("")
-                 
+                  
                 c5_1, c5_2, c5_3 = st.columns(3)
                 with c5_1: render_styled_block("건물용도", info.get('mainPurpsCdNm'))
                 with c5_2: render_styled_block("건물주구조", info.get('strctCdNm'))
                 with c5_3: st.empty()
-                 
+                  
                 st.markdown("</div>", unsafe_allow_html=True)
                 st.markdown("---")
 
@@ -881,17 +886,17 @@ if addr_input:
 
                 row2_1, row2_2, row2_3 = st.columns(3)
                 with row2_1: loan_val = comma_input("융자금", "억원", "loan", 0)
-                 
+                  
                 with row2_2: 
                     st.markdown(f"""<div style='font-size: 16px; font-weight: 700; color: #D32F2F; margin-bottom: 4px;'>매매금액</div>""", unsafe_allow_html=True)
                     c_in_p, c_unit_p = st.columns([3, 1]) 
                     with c_in_p:
                         if "price" not in st.session_state: st.session_state["price"] = 0
                         current_p = st.session_state["price"]
-                         
+                          
                         # 0일 때 빈 칸 표시 로직 적용
                         fmt_price = f"{current_p:,}" if current_p != 0 else ""
-                         
+                          
                         p_input = st.text_input("매매금액", value=fmt_price, key="price_input", label_visibility="hidden")
                         try:
                             # 빈 값 처리
@@ -908,7 +913,7 @@ if addr_input:
                 try:
                     real_invest_won = (price_val * 10000) - deposit_val
                     real_invest_eok = real_invest_won / 10000
-                     
+                      
                     if real_invest_won > 0: yield_rate = ((rent_val * 12) / real_invest_won) * 100
                     else: yield_rate = 0
                 except: 
@@ -925,14 +930,14 @@ if addr_input:
                     """, unsafe_allow_html=True)
 
                 st.markdown("<hr style='margin: 15px 0; border-top: 1px dashed #ddd;'>", unsafe_allow_html=True)
-                 
+                  
                 land_py = info['platArea'] * 0.3025
                 tot_py = info['totArea'] * 0.3025
                 price_won = price_val * 100000000
 
                 land_price_per_py = 0
                 tot_price_per_py = 0
-                 
+                  
                 if land_py > 0: land_price_per_py = (price_won / land_py) / 10000 
                 if tot_py > 0: tot_price_per_py = (price_won / tot_py) / 10000        
 
@@ -947,7 +952,7 @@ if addr_input:
 
                 # [AI 인사이트 요약]
                 st.subheader("🔍 AI 물건분석 (Key Insights)")
-                 
+                  
                 st.write("###### 👇 해당되는 키워드를 선택하세요 (다중선택)")
                 env_options = [
                     "역세권", "대로변", "코너입지", "학군지", 
@@ -955,7 +960,7 @@ if addr_input:
                     "급매물", "사옥추천", "메디컬입지", "주차편리", 
                     "명도협의가능", "수익형", "밸류업유망", "관리상태최상"
                 ]
-                 
+                  
                 cols_check = st.columns(4)
                 selected_envs = []
                 for i, opt in enumerate(env_options):
@@ -963,14 +968,14 @@ if addr_input:
                         selected_envs.append(opt)
 
                 st.write("")
-                 
+                  
                 # [초기화 기능 추가] key에 주소를 넣어 주소 변경 시 엑셀 파일도 자동 초기화
                 with st.expander("📂 비교 분석용 엑셀 데이터 업로드 (선택사항)", expanded=True):
                     st.info("💡 엑셀 필수 컬럼: 구분, 소재지, 대지면적, 매매금액")
                     comp_file = st.file_uploader("주변 매매사례/매물 엑셀 업로드", type=['xlsx', 'xls'], key=f"excel_{addr_input}")
                     filtered_comp_df = None
                     target_dong = ""
-                     
+                      
                     if comp_file:
                         try:
                             # 1. 주소에서 '동' 추출 (예: 서울 강남구 논현동 254-4 -> 논현동)
@@ -1046,13 +1051,13 @@ if addr_input:
                             "price": price_val,
                             "land_pyeong_price_val": land_price_per_py
                         }
-                         
+                          
                         summary_points = generate_insight_summary(
                             info, finance_data_for_ai, st.session_state['zoning'], 
                             selected_envs, user_comment, filtered_comp_df, target_dong
                         )
                         st.session_state['selling_summary'] = summary_points
-                 
+                  
                 if st.session_state['selling_summary']:
                     st.markdown(f"""<div class="ai-summary-box"><div class="ai-title">🌟 전문가 투자 포인트 (Key Insights)</div>""", unsafe_allow_html=True)
                     for point in st.session_state['selling_summary']:
@@ -1063,7 +1068,7 @@ if addr_input:
 
                 # [지도 및 다운로드]
                 st.subheader("🗺 지도 및 다운로드")
-                 
+                  
                 naver_map_url = f"https://map.naver.com/v5/search/{quote_plus(location['full_addr'])}"
                 st.markdown(f"**[📍 네이버 지도에서 위치 확인하기 (Click)]({naver_map_url})**")
 
@@ -1104,13 +1109,13 @@ if addr_input:
                     </html>
                     """
                     components.html(kakao_html, height=370)
-                         
+                          
                 with c_map2:
                     st.write("##### 📐 지적도(땅 모양)")
                     cadastral_img = get_cadastral_map_image(location['lat'], location['lng'])
                     if cadastral_img: st.image(cadastral_img, use_container_width=True, caption="해당 지번 지적도")
                     else: st.error("지적도 로딩 실패")
-                 
+                  
                 finance_data = {
                     "price": price_val, "deposit": deposit_val, "rent": rent_val, 
                     "maintenance": maint_val, "loan": loan_val, "yield": yield_rate, 
@@ -1128,10 +1133,9 @@ if addr_input:
                     st.write("##### 📥 PPT 저장")
                     pptx_file = create_pptx(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
                     st.download_button(label="PPT 다운로드", data=pptx_file, file_name=f"부동산분석_{addr_input}.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", use_container_width=True)
-                 
+                  
                 with c_xls:
                     st.write("##### 📥 엑셀 저장")
                     xlsx_file = create_excel(info, location['full_addr'], finance_data, z_val, location['lat'], location['lng'], land_price, current_summary, file_to_pass)
 
                     st.download_button(label="엑셀 다운로드", data=xlsx_file, file_name=f"부동산분석_{addr_input}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
