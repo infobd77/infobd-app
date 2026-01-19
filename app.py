@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import requests
 import xml.etree.ElementTree as ET
@@ -125,7 +123,8 @@ st.markdown("""
 # [설정] 인증키 (요청하신 공용키 복구)
 # =========================================================
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
-VWORLD_KEY = "47B30ADD-AECB-38F3-B5B4-DD92CCA756C5"
+# [변경됨] 요청하신 새로운 브이월드 키 적용
+VWORLD_KEY = "92DFF41C-AAAD-327C-AF08-5439410E69A4"
 KAKAO_API_KEY = "2a3330b822a5933035eacec86061ee41"
 
 if 'zoning' not in st.session_state: st.session_state['zoning'] = ""
@@ -746,7 +745,7 @@ st.markdown("---")
 with st.expander("🗺 지도에서 직접 클릭하여 찾기 (Click)", expanded=False):
     # 서울 강남구청 중심
     m = folium.Map(location=[37.5172, 127.0473], zoom_start=14)
-    
+      
     # [수정] returned_objects를 지정하여 불필요한 데이터 로딩을 막고 오류 방지
     output = st_folium(m, width=700, height=400, returned_objects=["last_clicked"])
 
@@ -1009,10 +1008,10 @@ if addr_input:
                                      
                                     if not filtered_comp_df.empty:
                                         st.success(f"✅ '{target_dong}' 관련 데이터 {len(filtered_comp_df)}건을 찾아 분석합니다.")
-                                         
+                                          
                                         col_res1, col_res2 = st.columns(2)
                                         sold_cases = filtered_comp_df[filtered_comp_df['구분'].astype(str).str.contains('매각|완료|매매', na=False)]
-                                         
+                                          
                                         with col_res1:
                                             if not sold_cases.empty:
                                                 avg_sold = sold_cases['평당가'].mean()
