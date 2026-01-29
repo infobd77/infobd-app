@@ -93,6 +93,7 @@ def reset_analysis():
 
 # --- [헬퍼 함수] ---
 def get_address_from_coords(lat, lng):
+    # [수정] http -> https
     url = "https://api.vworld.kr/req/address" 
     params = {"service": "address", "request": "getaddress", "version": "2.0", "crs": "EPSG:4326", "point": f"{lng},{lat}", "type": "PARCEL", "format": "json", "key": VWORLD_KEY}
     try:
@@ -254,174 +255,48 @@ def generate_insight_candidates(info, finance, zoning, env_features, user_commen
 # --- [API 조회 및 PPT 생성 함수들] ---
 @st.cache_data(show_spinner=False)
 def get_pnu_and_coords(address):
-    url = "http://api.vworld.kr/req/search"
-    search_type = 'road' if '로' in address or '길' in address else 'parcel'
-    params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": search_type, "format": "json", "errorformat": "json", "key": VWORLD_KEY}
+    # [수정] http -> https
+    url = "https://api.vworld.kr/req/address" 
+    params = {"service": "address", "request": "getaddress", "version": "2.0", "crs": "EPSG:4326", "point": f"{lng},{lat}", "type": "PARCEL", "format": "json", "key": VWORLD_KEY}
     try:
-        res = requests.get(url, params=params, timeout=3)
-        data = res.json()
-        if data['response']['status'] == 'NOT_FOUND':
-            params['query'] = "서울특별시 " + address
-            res = requests.get(url, params=params, timeout=3)
-            data = res.json()
-        if data['response']['status'] == 'NOT_FOUND': return None
-        item = data['response']['result']['items'][0]
-        pnu = item.get('address', {}).get('pnu') or item.get('id')
-        lng = float(item['point']['x']); lat = float(item['point']['y'])
-        full_address = item.get('address', {}).get('parcel', '') 
-        if not full_address: full_address = item.get('address', {}).get('road', '') 
-        if not full_address: full_address = address
-        return {"pnu": pnu, "lat": lat, "lng": lng, "full_addr": full_address}
+        res = requests.get(url, params=params, timeout=5, verify=False)
+        if res.json().get('response', {}).get('status') == 'OK': return res.json()['response']['result'][0]['text']
     except: return None
 
-@st.cache_data(show_spinner=False)
-def get_zoning_smart(lat, lng):
-    url = "http://api.vworld.kr/req/data"
-    delta = 0.0005
-    min_x, min_y = lng - delta, lat - delta
-    max_x, max_y = lng + delta, lat + delta
-    params = {"service": "data", "request": "GetFeature", "data": "LT_C_UQ111", "key": VWORLD_KEY, "format": "json", "size": "10", "geomFilter": f"BOX({min_x},{min_y},{max_x},{max_y})", "domain": "localhost"}
+def render_styled_block(label, value):
+    st.markdown(f"<div style='margin-bottom:10px;'><div style='font-size:16px;color:#555;font-weight:700;'>{label}</div><div style='font-size:26px;font-weight:900;color:#111;'>{value}</div></div>", unsafe_allow_html=True)
+
+def editable_area_input(label, key, default_val):
+    val_str = st.text_input(label, value=str(default_val), key=key)
     try:
-        res = requests.get(url, params=params, timeout=3, verify=False)
-        if res.status_code == 200:
-            data = res.json()
-            features = data.get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
-            if features:
-                zonings = [f['properties']['UNAME'] for f in features]
-                return ", ".join(sorted(list(set(zonings))))
-    except: pass
-    return ""
+        val = float(str(val_str).replace(',', ''))
+        st.markdown(f"<div style='color:#D32F2F;font-size:24px;font-weight:900;text-align:right;margin-top:-5px;'>{val*0.3025:,.1f} 평</div>", unsafe_allow_html=True)
+        return val
+    except: 
+        st.markdown(f"<div style='color:#D32F2F;font-size:24px;font-weight:900;text-align:right;margin-top:-5px;'>- 평</div>", unsafe_allow_html=True)
+        return 0.0
 
-@st.cache_data(show_spinner=False)
-def get_land_price(pnu):
-    url = "http://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr"
-    current_year = datetime.datetime.now().year
-    years_to_check = range(current_year, current_year - 7, -1) 
-    for year in years_to_check:
-        params = {"serviceKey": USER_KEY, "pnu": pnu, "format": "xml", "numOfRows": "1", "pageNo": "1", "stdrYear": str(year)}
-        try:
-            res = requests.get(url, params=params, timeout=4)
-            if res.status_code == 200:
-                root = ET.fromstring(res.content)
-                if root.findtext('.//resultCode') == '00':
-                    price_node = root.find('.//indvdLandPrice')
-                    if price_node is not None and price_node.text: return int(price_node.text)
-        except: continue
-        time.sleep(0.05)
-    return 0
+def editable_text_input(label, key, default_val):
+    return st.text_input(label, value=str(default_val), key=key)
 
-@st.cache_data(show_spinner=False)
-def get_building_info_smart(pnu):
-    base_url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
-    sigungu = pnu[0:5]; bjdong = pnu[5:10]; bun = pnu[11:15]; ji = pnu[15:19]
-    plat_code = '1' if pnu[10] == '2' else '0'
-    params = {"serviceKey": USER_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat_code, "bun": bun, "ji": ji, "numOfRows": "1", "pageNo": "1"}
-    try:
-        res = requests.get(base_url, params=params, timeout=5, verify=False)
-        if res.status_code == 200: return parse_xml_response(res.content)
-        return {"error": f"서버 상태: {res.status_code}"}
-    except Exception as e: return {"error": str(e)}
+def comma_input(label, unit, key, default_val, help_text=""):
+    st.markdown(f"<div style='font-size:17px;font-weight:800;color:#222;margin-bottom:4px;'>{label} <span style='font-size:13px;color:#666;'>{help_text}</span></div>", unsafe_allow_html=True)
+    c1, c2 = st.columns([3, 1]) 
+    with c1:
+        if key not in st.session_state: st.session_state[key] = default_val
+        val_in = st.text_input(label, value=f"{st.session_state[key]:,}" if st.session_state[key] else "", key=f"{key}_w", label_visibility="hidden")
+        try: st.session_state[key] = int(str(val_in).replace(',', '').strip()) if val_in else 0
+        except: st.session_state[key] = 0
+    with c2: st.markdown(f"<div style='margin-top:15px;font-size:19px;font-weight:700;color:#444;'>{unit}</div>", unsafe_allow_html=True)
+    return st.session_state[key]
 
-def parse_xml_response(content):
-    try:
-        root = ET.fromstring(content)
-        item = root.find('.//item')
-        if item is None: return None
-          
-        indr_mech = int(item.findtext('indrMechUtcnt', '0') or 0)
-        indr_auto = int(item.findtext('indrAutoUtcnt', '0') or 0)
-        total_indoor = indr_mech + indr_auto
-        oudr_mech = int(item.findtext('oudrMechUtcnt', '0') or 0)
-        oudr_auto = int(item.findtext('oudrAutoUtcnt', '0') or 0)
-        total_outdoor = oudr_mech + oudr_auto
-        total_parking = total_indoor + total_outdoor
-        parking_str = f"{total_parking}대(옥내{total_indoor}/옥외{total_outdoor})"
-        ride_elvt = int(item.findtext('rideUseElvtCnt', '0') or 0)
-        emgen_elvt = int(item.findtext('emgenUseElvtCnt', '0') or 0)
-        total_elvt = ride_elvt + emgen_elvt
-        elvt_str = f"{total_elvt}대"
-          
-        return {
-            "bldNm": item.findtext('bldNm', '-'),
-            "mainPurpsCdNm": item.findtext('mainPurpsCdNm', '정보없음'),
-            "strctCdNm": item.findtext('strctCdNm', '정보없음'),
-            "platArea": float(item.findtext('platArea', '0') or 0),
-            "totArea": float(item.findtext('totArea', '0') or 0),
-            "archArea_val": float(item.findtext('archArea', '0') or 0),
-            "groundArea": float(item.findtext('vlRatEstmTotArea', '0') or 0),
-            "ugrndFlrCnt": int(item.findtext('ugrndFlrCnt', '0') or 0),
-            "grndFlrCnt": int(item.findtext('grndFlrCnt', '0') or 0),
-            "useAprDay": format_date_dot(item.findtext('useAprDay', '')),
-            "bcRat": float(item.findtext('bcRat', '0') or 0),
-            "vlRat": float(item.findtext('vlRat', '0') or 0),
-            "rideUseElvtCnt": elvt_str,
-            "parking": parking_str
-        }
-    except Exception as e: return {"error": str(e)}
+def format_date_dot(date_str):
+    if not date_str or len(date_str) != 8: return date_str
+    return f"{date_str[:4]}.{date_str[4:6]}.{date_str[6:]}"
 
-@st.cache_data(show_spinner=False)
-def get_floor_info_smart(pnu):
-    base_url = "http://apis.data.go.kr/1613000/BldRgstHubService/getBrFlrOulnInfo"
-    sigungu = pnu[0:5]; bjdong = pnu[5:10]; bun = pnu[11:15]; ji = pnu[15:19]
-    plat_code = '1' if pnu[10] == '2' else '0'
-    params = {"serviceKey": USER_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat_code, "bun": bun, "ji": ji, "numOfRows": "50", "pageNo": "1"}
-      
-    floor_data = []
-    try:
-        res = requests.get(base_url, params=params, timeout=5)
-        if res.status_code == 200:
-            root = ET.fromstring(res.content)
-            items = root.findall('.//item')
-            floor_map = {} 
-            for item in items:
-                try:
-                    flr_no = int(item.findtext('flrNo'))
-                    flr_gb = item.findtext('flrGbCdNm')
-                    area = float(item.findtext('area', '0') or 0)
-                    if '지하' in flr_gb: idx = -flr_no
-                    else: idx = flr_no
-                    if idx in floor_map: floor_map[idx] += area
-                    else: floor_map[idx] = area
-                except: continue
-            sorted_floors = sorted(floor_map.keys()) 
-            for idx in sorted_floors:
-                area_m2 = floor_map[idx]
-                area_py = area_m2 * 0.3025
-                if idx < 0: flr_name = f"B{abs(idx)}"
-                else: flr_name = f"{idx}층"
-                floor_data.append({
-                    "층수": flr_name, "입주업체": "", "층별면적": f"{area_py:.2f}",
-                    "보증금": None, "임대료": None, "관리비": None, "임대차기간": "", "비고": ""
-                })
-            return floor_data
-    except Exception as e: print(e)
-    return []
-
-@st.cache_data(show_spinner=False)
-def get_cadastral_map_image(lat, lng):
-    delta = 0.0015 
-    minx, miny = lng - delta, lat - delta
-    maxx, maxy = lng + delta, lat + delta
-    bbox = f"{minx},{miny},{maxx},{maxy}"
-    layer = "LP_PA_CBND_BUBUN"
-    url = f"https://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "http://localhost:8501"}
-    try:
-        res = requests.get(url, headers=headers, timeout=5, verify=False)
-        if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
-    except: pass
-    return None
-
-@st.cache_data(show_spinner=False)
-def get_static_map_image(lat, lng):
-    url = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
-    try:
-        res = requests.get(url, timeout=3)
-        if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
-    except: pass
-    return None
-
+# ---------------------------------------------------------
 # [PPT 생성 함수 수정버전]
+# ---------------------------------------------------------
 def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_points, images_dict, rent_roll_df=None, template_binary=None, template_1page_binary=None):
     deep_blue = RGBColor(0, 51, 153) 
     deep_red = RGBColor(204, 0, 0)
@@ -774,11 +649,11 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
 
         left_x = Cm(1.0); right_x = Cm(10.8); col_w = Cm(9.2)
 
-        lbl_img = slide.shapes.add_textbox(left_x, Cm(3.3), col_w, Cm(0.6)); lbl_img.text_frame.text = "건물사진"; lbl_img.text_frame.paragraphs[0].font.bold=True
+        lbl_img = slide.shapes.add_textbox(left_x, Cm(2.9), col_w, Cm(0.6)); lbl_img.text_frame.text = "건물사진"; lbl_img.text_frame.paragraphs[0].font.bold=True
         main_img = images_dict.get('u2')
         if main_img:
             main_img.seek(0)
-            pic = slide.shapes.add_picture(main_img, left_x, Cm(4.3), width=col_w, height=Cm(10.61))
+            pic = slide.shapes.add_picture(main_img, left_x, Cm(3.5), width=col_w, height=Cm(12.0))
             pic.line.visible = True; pic.line.color.rgb = RGBColor(200, 200, 200); pic.line.width = Pt(1)
         else:
             rect = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, left_x, Cm(3.5), col_w, Cm(12.0)); rect.fill.background(); rect.line.color.rgb = RGBColor(200, 200, 200)
@@ -787,7 +662,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
         loc_img = images_dict.get('u1')
         if loc_img:
             loc_img.seek(0)
-            pic_map = slide.shapes.add_picture(loc_img, left_x, Cm(17.0), width=col_w, height=Cm(11.61))
+            pic_map = slide.shapes.add_picture(loc_img, left_x, Cm(16.5), width=col_w, height=Cm(12.0))
             pic_map.line.visible = True; pic_map.line.color.rgb = RGBColor(200, 200, 200); pic_map.line.width = Pt(1)
         else:
             map_img = get_static_map_image(lat, lng)
@@ -795,7 +670,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
                 pic_map = slide.shapes.add_picture(map_img, left_x, Cm(16.5), width=col_w, height=Cm(12.0))
                 pic_map.line.visible = True; pic_map.line.color.rgb = RGBColor(200, 200, 200)
 
-        lbl_tbl = slide.shapes.add_textbox(right_x, Cm(3.3), col_w, Cm(0.6)); lbl_tbl.text_frame.text = "건물개요"; lbl_tbl.text_frame.paragraphs[0].font.bold=True
+        lbl_tbl = slide.shapes.add_textbox(right_x, Cm(2.9), col_w, Cm(0.6)); lbl_tbl.text_frame.text = "건물개요"; lbl_tbl.text_frame.paragraphs[0].font.bold=True
           
         # [변환된 평수 사용]
         plat_disp = f"{info['platArea']*0.3025:,.1f}평" if info['platArea'] else "-"
@@ -818,13 +693,13 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
              ["관리비", f"{finance['maintenance']:,}만", "매매금액", f"{finance['price']:,}억"]
         ]
           
-        table = slide.shapes.add_table(12, 4, right_x, Cm(4.3), col_w, Cm(10.5)).table
+        table = slide.shapes.add_table(12, 4, right_x, Cm(3.5), col_w, Cm(10.5)).table
         table.columns[0].width = Cm(2.3); table.columns[1].width = Cm(2.3); table.columns[2].width = Cm(2.3); table.columns[3].width = Cm(2.3)
 
         for r in range(12):
             for c in range(4):
                 cell = table.cell(r, c); cell.text = str(data[r][c]); cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-                p = cell.text_frame.paragraphs[0]; p.alignment = PP_ALIGN.CENTER; p.font.size = Pt(10); p.font.name = "맑은 고딕"
+                p = cell.text_frame.paragraphs[0]; p.alignment = PP_ALIGN.CENTER; p.font.size = Pt(8); p.font.name = "맑은 고딕"
                 cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(240, 248, 255) if c % 2 == 0 else RGBColor(255, 255, 255)
                   
                 # 기본적으로 검정색 적용
@@ -838,7 +713,7 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
                     p.font.bold = True
                   
                 if (r == 2 and c <= 1) or (r == 3 and c <= 1): # 대지, 연면적
-                      p.font.color.rgb = bright_red
+                      p.font.color.rgb = black
                       p.font.bold = True
                   
                 # [유지] 매매금액은 빨간색 유지
@@ -849,12 +724,12 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
         table.cell(0, 1).merge(table.cell(0, 3))
 
         # 지적도
-        slide.shapes.add_textbox(right_x, Cm(15.9), col_w, Cm(0.6)).text_frame.text = "지적도"
+        slide.shapes.add_textbox(right_x, Cm(14.4), col_w, Cm(0.6)).text_frame.text = "지적도"
         cad_img = images_dict.get('u3') or get_cadastral_map_image(lat, lng)
-        if cad_img: slide.shapes.add_picture(cad_img, right_x, Cm(17.0), width=col_w, height=Cm(8.2))
+        if cad_img: slide.shapes.add_picture(cad_img, right_x, Cm(15.0), width=col_w, height=Cm(10.2))
 
         # 투자포인트
-        slide.shapes.add_textbox(right_x, Cm(25.2), col_w, Cm(0.6)).text_frame.text = "투자포인트 내용"
+        slide.shapes.add_textbox(right_x, Cm(25.6), col_w, Cm(0.6)).text_frame.text = "투자포인트 내용"
         rect_ai = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, right_x, Cm(26.2), col_w, Cm(2.3))
         rect_ai.fill.background(); rect_ai.line.color.rgb = RGBColor(200, 200, 200)
           
