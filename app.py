@@ -69,6 +69,7 @@ st.markdown("""
 # =========================================================
 # [설정] 전역 변수
 # =========================================================
+# [주의] 이 키는 예시입니다. 본인의 V-World 키를 발급받아 교체하세요.
 VWORLD_KEY = "47B30ADD-AECB-38F3-B5B4-DD92CCA756C5" 
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
 
@@ -132,7 +133,7 @@ def format_date_dot(date_str):
     return f"{date_str[:4]}.{date_str[4:6]}.{date_str[6:]}"
 
 # ---------------------------------------------------------
-# [인사이트 생성]
+# [수정된 함수] 키워드 개수에 맞춰 10개 랜덤 배분 로직
 # ---------------------------------------------------------
 def generate_insight_candidates(info, finance, zoning, env_features, user_comment, comp_df=None, target_dong=""):
     points = []
@@ -178,38 +179,50 @@ def generate_insight_candidates(info, finance, zoning, env_features, user_commen
       
     final_results = []
     
-    # [1] 사용자 코멘트
+    # [1] 사용자 코멘트가 있으면 최우선 삽입 (총 11개가 될 수도 있음)
     if user_comment:
         final_results.append(f"📌 {user_comment.strip()[:40]}") 
 
-    # [2] 선택된 키워드
+    # [2] 선택된 키워드 개수 확인
     num_selected = len(env_features)
-    target_count = 10  
+    target_count = 10  # 목표 개수
     
     if num_selected > 0:
         if num_selected <= target_count:
+            # --- [Case A] 키워드 개수가 10개 이하인 경우 (N빵 + 앞쪽 몰아주기) ---
+            # 예: 3개 선택 -> 10 // 3 = 3 (기본), 나머지 1 -> 첫번째 키워드는 4개
             base_count = target_count // num_selected
             remainder = target_count % num_selected
+            
             for i, keyword in enumerate(env_features):
                 if keyword in marketing_db:
+                    # 이번 키워드에서 가져올 개수 계산
                     count_to_pick = base_count
-                    if i < remainder: count_to_pick += 1
+                    if i < remainder:  # 나머지만큼 앞쪽 키워드에 +1 배분
+                        count_to_pick += 1
+                    
+                    # 해당 키워드 데이터에서 랜덤 추출
                     pool = marketing_db[keyword]
+                    # 데이터가 부족하면 있는 만큼만, 충분하면 계산된 만큼 추출
                     real_count = min(len(pool), count_to_pick)
                     picked = random.sample(pool, real_count)
                     final_results.extend(picked)
         else:
+            # --- [Case B] 키워드 개수가 10개보다 많은 경우 (랜덤 10개 선정 후 각 1개씩) ---
+            # 15개 선택했다면 그 중 랜덤으로 10개 키워드를 뽑음
             chosen_keywords = random.sample(env_features, target_count)
+            
             for keyword in chosen_keywords:
                 if keyword in marketing_db:
+                    # 각 키워드당 1개씩만 추출
                     pool = marketing_db[keyword]
                     picked = random.sample(pool, 1)
                     final_results.extend(picked)
 
-    # 중복 제거
+    # 혹시 모를 중복 제거 (순서 유지)
     unique_final_points = list(dict.fromkeys(final_results))
     
-    # 3. 가격 비교
+    # 3. 가격 비교 로직
     if comp_df is not None and not comp_df.empty:
         try:
             sold_df = comp_df[comp_df['구분'].astype(str).str.contains('매각|완료|매매', na=False)]
@@ -220,14 +233,20 @@ def generate_insight_candidates(info, finance, zoning, env_features, user_commen
                 diff_pct = abs(diff / avg_price) * 100
                 loc_text = target_dong if target_dong else "인근"
                 if diff < 0:
-                    msgs = [f"☑ [가격우위] {loc_text} 평균(평 {avg_price:,.0f}만) 대비 {diff_pct:.1f}% 저렴한 저평가 매물", f"☑ [가격메리트] 주변 시세보다 평당 {abs(diff):,.0f}만원 싸게 나온 확실한 급매"]
+                    msgs = [
+                        f"☑ [가격우위] {loc_text} 평균(평 {avg_price:,.0f}만) 대비 {diff_pct:.1f}% 저렴한 저평가 매물",
+                        f"☑ [가격메리트] 주변 시세보다 평당 {abs(diff):,.0f}만원 싸게 나온 확실한 급매"
+                    ]
                     points.append(random.choice(msgs))
                 else:
-                    msgs = [f"☑ [대장주] {loc_text} 시세를 리딩하는 압도적 컨디션의 대장 건물", f"☑ [프리미엄] 평균보다 높지만 그만한 가치가 있는 A급 입지"]
+                    msgs = [
+                        f"☑ [대장주] {loc_text} 시세를 리딩하는 압도적 컨디션의 대장 건물",
+                        f"☑ [프리미엄] 평균보다 높지만 그만한 가치가 있는 A급 입지"
+                    ]
                     points.append(random.choice(msgs))
         except: pass
 
-    # 4. 수익률
+    # 4. 수익률 로직
     yield_val = finance['yield']
     if yield_val >= 4.5:
         msgs = [f"☑ [초고수익] 연 {yield_val:.1f}% 수익률! 요즘 같은 고금리에 보기 드문 보물", f"☑ [현금흐름] 묻어두면 돈이 되는 연 {yield_val:.1f}% 수익형 부동산 끝판왕"]
@@ -242,27 +261,46 @@ def generate_insight_candidates(info, finance, zoning, env_features, user_commen
         msgs = [f"☑ [미래가치] 당장 수익보다 향후 폭발적 지가 상승과 개발 호재에 집중", f"☑ [시세차익] 보유할수록 땅값이 오르는 토지 가치 중심의 투자처"]
         points.append(random.choice(msgs))
 
-    # 5. 기본 멘트
-    fallback_msgs = ["☑ [희소가치] 매물 잠김 심한 이 지역 내 오랜만에 등장한 귀한 물건", "☑ [육각형] 입지, 가격, 상권, 미래가치 4박자 모두 갖춘 보기 드문 투자처", "☑ [불패입지] 한번 들어오면 나가지 않는 임차인 선호도 1위 검증된 자리"]
+    # 5. 부족하면 채워넣을 기본 멘트
+    fallback_msgs = [
+        "☑ [희소가치] 매물 잠김 심한 이 지역 내 오랜만에 등장한 귀한 물건", 
+        "☑ [육각형] 입지, 가격, 상권, 미래가치 4박자 모두 갖춘 보기 드문 투자처",
+        "☑ [불패입지] 한번 들어오면 나가지 않는 임차인 선호도 1위 검증된 자리"
+    ]
     random.shuffle(fallback_msgs)
     for msg in fallback_msgs:
         points.append(msg)
         
+    # 중복 제거 후 상위 10개만 반환 (요청사항 적용)
     unique_final_points = list(dict.fromkeys(unique_final_points + points))
     return unique_final_points[:10]
 
 # --- [API 조회 및 PPT 생성 함수들] ---
 @st.cache_data(show_spinner=False)
 def get_pnu_and_coords(address):
-    # [수정] http -> https
+    # [수정] http -> https (API 엔드포인트 수정됨)
     url = "https://api.vworld.kr/req/search" 
-    params = {"service": "search", "request": "search", "version": "2.0", "crs": "EPSG:4326", "size": "1", "page": "1", "query": address, "type": "address", "category": "road" if '로' in address or '길' in address else "parcel", "format": "json", "errorformat": "json", "key": VWORLD_KEY}
+    params = {
+        "service": "search",
+        "request": "search",
+        "version": "2.0",
+        "crs": "EPSG:4326",
+        "size": "1",
+        "page": "1",
+        "query": address,
+        "type": "address",
+        "category": "road" if '로' in address or '길' in address else "parcel",
+        "format": "json",
+        "errorformat": "json",
+        "key": VWORLD_KEY
+    }
     try:
         res = requests.get(url, params=params, timeout=5, verify=False)
         if res.json().get('response', {}).get('status') == 'OK': 
             item = res.json()['response']['result']['items'][0]
             pnu = item.get('address', {}).get('pnu') or item.get('id')
-            lng = float(item['point']['x']); lat = float(item['point']['y'])
+            lng = float(item['point']['x'])
+            lat = float(item['point']['y'])
             full_address = item.get('address', {}).get('parcel', '') 
             if not full_address: full_address = item.get('address', {}).get('road', '') 
             if not full_address: full_address = address
