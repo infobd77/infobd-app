@@ -67,14 +67,10 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # =========================================================
-# [필수 수정] API 키 및 주소 설정
+# [필수 수정] API 키 및 주소 설정 (확인됨)
 # =========================================================
-VWORLD_KEY = "92DFF41C-AAAD-327C-AF08-5439410E69A4" #
-
-# V-World 관리자 페이지에 등록된 주소 (스크린샷 내용 일치 확인)
-REFERER_URL = "https://port-0-infobd-app-mkz6091j1bce3145.sel3.cloudtype.app/" #
-
-# 공공데이터포털(건축물대장) 키
+VWORLD_KEY = "92DFF41C-AAAD-327C-AF08-5439410E69A4"
+REFERER_URL = "https://port-0-infobd-app-mkz6091j1bce3145.sel3.cloudtype.app/"
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
 
 if 'zoning' not in st.session_state: st.session_state['zoning'] = ""
@@ -96,25 +92,15 @@ def reset_analysis():
     st.session_state['rent_roll_data'] = [] 
     st.session_state['rent_roll_init'] = False
 
-# --- [헬퍼 함수: 요청 헤더 보강] ---
-def get_headers():
-    # [수정] 봇 차단 방지를 위해 실제 브라우저처럼 보이게 User-Agent 추가
-    return {
-        "Referer": REFERER_URL,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-
+# --- [헬퍼 함수] ---
 def get_address_from_coords(lat, lng):
-    url = "https://api.vworld.kr/req/address" 
+    url = "http://api.vworld.kr/req/address" # HTTP 사용
     params = {"service": "address", "request": "getaddress", "version": "2.0", "crs": "EPSG:4326", "point": f"{lng},{lat}", "type": "PARCEL", "format": "json", "key": VWORLD_KEY}
+    headers = {"Referer": REFERER_URL}
     try:
-        res = requests.get(url, params=params, headers=get_headers(), timeout=5, verify=False)
-        if res.status_code == 200:
-            data = res.json()
-            if data.get('response', {}).get('status') == 'OK':
-                return data['response']['result'][0]['text']
+        res = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
+        if res.json().get('response', {}).get('status') == 'OK': return res.json()['response']['result'][0]['text']
     except: return None
-    return None
 
 def render_styled_block(label, value):
     st.markdown(f"<div style='margin-bottom:10px;'><div style='font-size:16px;color:#555;font-weight:700;'>{label}</div><div style='font-size:26px;font-weight:900;color:#111;'>{value}</div></div>", unsafe_allow_html=True)
@@ -231,26 +217,22 @@ def generate_insight_candidates(info, finance, zoning, env_features, user_commen
     unique_final_points = list(dict.fromkeys(unique_final_points + points))
     return unique_final_points[:10]
 
-# --- [API 조회 및 PPT 생성 함수들] ---
+# --- [API 조회] 핵심 수정 부분: HTTP 사용 ---
 @st.cache_data(show_spinner=False)
 def get_pnu_and_coords(address):
-    url = "https://api.vworld.kr/req/search" 
-    # [수정] query에 주소 바로 전달
+    # [수정] https -> http (502 에러 방지)
+    url = "http://api.vworld.kr/req/search" 
     params = {
         "service": "search", "request": "search", "version": "2.0", 
         "crs": "EPSG:4326", "size": "1", "page": "1", 
-        "query": address, 
-        "type": "address", 
-        "category": "road" if '로' in address or '길' in address else "parcel", 
+        "query": address, "type": "address", "category": "parcel", 
         "format": "json", "errorformat": "json", "key": VWORLD_KEY
     }
-    
+    # [수정] 단순 헤더
+    headers = {"Referer": REFERER_URL}
     try:
-        # [수정] get_headers() 사용
-        res = requests.get(url, params=params, headers=get_headers(), timeout=5, verify=False)
-        
-        # [수정] 응답 내용 디버깅을 위한 안전한 처리
-        try:
+        res = requests.get(url, params=params, headers=headers, timeout=10) # 타임아웃 10초로 늘림
+        if res.status_code == 200:
             data = res.json()
             if data.get('response', {}).get('status') == 'OK': 
                 item = data['response']['result']['items'][0]
@@ -258,31 +240,25 @@ def get_pnu_and_coords(address):
                 lng = float(item['point']['x']); lat = float(item['point']['y'])
                 full_address = item.get('address', {}).get('parcel', '') or item.get('address', {}).get('road', '') or address
                 return {"pnu": pnu, "lat": lat, "lng": lng, "full_addr": full_address}
-            elif data.get('response', {}).get('status') == 'NOT_FOUND':
-                # 검색 결과 없음 (정상적인 응답)
-                return None
-            else:
-                # 기타 API 에러
-                st.error(f"V월드 응답 오류: {data}")
-                return None
-        except ValueError:
-            # [핵심] JSON이 아닌 응답(HTML 에러 등)이 왔을 때 내용 출력
-            st.error(f"서버 통신 오류 (V월드에서 차단됨): {res.text[:200]}")
             return None
-            
+        else:
+            st.error(f"서버 응답 코드: {res.status_code}")
+            return None
     except Exception as e:
         st.error(f"연결 오류: {e}")
         return None
 
 @st.cache_data(show_spinner=False)
 def get_zoning_smart(lat, lng):
-    url = "https://api.vworld.kr/req/data"
+    # [수정] https -> http
+    url = "http://api.vworld.kr/req/data"
     delta = 0.0005
     min_x, min_y = lng - delta, lat - delta
     max_x, max_y = lng + delta, lat + delta
     params = {"service": "data", "request": "GetFeature", "data": "LT_C_UQ111", "key": VWORLD_KEY, "format": "json", "size": "10", "geomFilter": f"BOX({min_x},{min_y},{max_x},{max_y})", "domain": REFERER_URL}
+    headers = {"Referer": REFERER_URL}
     try:
-        res = requests.get(url, params=params, headers=get_headers(), timeout=3, verify=False)
+        res = requests.get(url, params=params, headers=headers, timeout=5)
         if res.status_code == 200:
             features = res.json().get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
             if features: return ", ".join(sorted(list(set([f['properties']['UNAME'] for f in features]))))
@@ -368,18 +344,22 @@ def get_floor_info_smart(pnu):
 def get_cadastral_map_image(lat, lng):
     delta = 0.0015 
     bbox = f"{lng-delta},{lat-delta},{lng+delta},{lat+delta}"
-    url = f"https://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=LP_PA_CBND_BUBUN&STYLES=LP_PA_CBND_BUBUN&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
+    # [수정] https -> http
+    url = f"http://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=LP_PA_CBND_BUBUN&STYLES=LP_PA_CBND_BUBUN&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
+    headers = {"Referer": REFERER_URL}
     try:
-        res = requests.get(url, headers=get_headers(), timeout=5, verify=False)
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
     except: pass
     return None
 
 @st.cache_data(show_spinner=False)
 def get_static_map_image(lat, lng):
-    url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    # [수정] https -> http
+    url = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    headers = {"Referer": REFERER_URL}
     try:
-        res = requests.get(url, headers=get_headers(), timeout=3)
+        res = requests.get(url, headers=headers, timeout=3)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
     except: pass
     return None
