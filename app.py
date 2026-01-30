@@ -73,6 +73,9 @@ st.markdown("""
 VWORLD_KEY = "47B30ADD-AECB-38F3-B5B4-DD92CCA756C5" 
 USER_KEY = "Xl5W1ALUkfEhomDR8CBUoqBMRXphLTIB7CuTto0mjsg0CQQspd7oUEmAwmw724YtkjnV05tdEx6y4yQJCe3W0g=="
 
+# [추가됨] 배포된 사이트 주소 (V월드에 등록된 주소)
+REFERER_URL = "https://port-0-infobd-app-mkz6091j1bce3145.sel3.cloudtype.app/"
+
 if 'zoning' not in st.session_state: st.session_state['zoning'] = ""
 if 'generated_candidates' not in st.session_state: st.session_state['generated_candidates'] = [] 
 if 'final_selected_insights' not in st.session_state: st.session_state['final_selected_insights'] = [] 
@@ -96,8 +99,10 @@ def reset_analysis():
 def get_address_from_coords(lat, lng):
     url = "https://api.vworld.kr/req/address" 
     params = {"service": "address", "request": "getaddress", "version": "2.0", "crs": "EPSG:4326", "point": f"{lng},{lat}", "type": "PARCEL", "format": "json", "key": VWORLD_KEY}
+    # [수정] 헤더 추가
+    headers = {"Referer": REFERER_URL}
     try:
-        res = requests.get(url, params=params, timeout=5, verify=False)
+        res = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
         if res.json().get('response', {}).get('status') == 'OK': return res.json()['response']['result'][0]['text']
     except: return None
 
@@ -294,8 +299,10 @@ def get_pnu_and_coords(address):
         "errorformat": "json",
         "key": VWORLD_KEY
     }
+    # [수정] 헤더 추가
+    headers = {"Referer": REFERER_URL}
     try:
-        res = requests.get(url, params=params, timeout=5, verify=False)
+        res = requests.get(url, params=params, headers=headers, timeout=5, verify=False)
         if res.json().get('response', {}).get('status') == 'OK': 
             item = res.json()['response']['result']['items'][0]
             pnu = item.get('address', {}).get('pnu') or item.get('id')
@@ -310,13 +317,16 @@ def get_pnu_and_coords(address):
 
 @st.cache_data(show_spinner=False)
 def get_zoning_smart(lat, lng):
-    url = "http://api.vworld.kr/req/data"
+    # [수정] http -> https
+    url = "https://api.vworld.kr/req/data"
     delta = 0.0005
     min_x, min_y = lng - delta, lat - delta
     max_x, max_y = lng + delta, lat + delta
     params = {"service": "data", "request": "GetFeature", "data": "LT_C_UQ111", "key": VWORLD_KEY, "format": "json", "size": "10", "geomFilter": f"BOX({min_x},{min_y},{max_x},{max_y})", "domain": "localhost"}
+    # [수정] 헤더 추가
+    headers = {"Referer": REFERER_URL}
     try:
-        res = requests.get(url, params=params, timeout=3, verify=False)
+        res = requests.get(url, params=params, headers=headers, timeout=3, verify=False)
         if res.status_code == 200:
             data = res.json()
             features = data.get('response', {}).get('result', {}).get('featureCollection', {}).get('features', [])
@@ -328,7 +338,8 @@ def get_zoning_smart(lat, lng):
 
 @st.cache_data(show_spinner=False)
 def get_land_price(pnu):
-    url = "http://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr"
+    # [수정] http -> https
+    url = "https://apis.data.go.kr/1611000/NsdiIndvdLandPriceService/getIndvdLandPriceAttr"
     current_year = datetime.datetime.now().year
     years_to_check = range(current_year, current_year - 7, -1) 
     for year in years_to_check:
@@ -395,7 +406,8 @@ def parse_xml_response(content):
 
 @st.cache_data(show_spinner=False)
 def get_floor_info_smart(pnu):
-    base_url = "http://apis.data.go.kr/1613000/BldRgstHubService/getBrFlrOulnInfo"
+    # [수정] http -> https
+    base_url = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrFlrOulnInfo"
     sigungu = pnu[0:5]; bjdong = pnu[5:10]; bun = pnu[11:15]; ji = pnu[15:19]
     plat_code = '1' if pnu[10] == '2' else '0'
     params = {"serviceKey": USER_KEY, "sigunguCd": sigungu, "bjdongCd": bjdong, "platGbCd": plat_code, "bun": bun, "ji": ji, "numOfRows": "50", "pageNo": "1"}
@@ -438,8 +450,10 @@ def get_cadastral_map_image(lat, lng):
     maxx, maxy = lng + delta, lat + delta
     bbox = f"{minx},{miny},{maxx},{maxy}"
     layer = "LP_PA_CBND_BUBUN"
+    # [수정] http -> https
     url = f"https://api.vworld.kr/req/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS={layer}&STYLES={layer}&CRS=EPSG:4326&BBOX={bbox}&WIDTH=400&HEIGHT=300&FORMAT=image/png&TRANSPARENT=FALSE&BGCOLOR=0xFFFFFF&EXCEPTIONS=text/xml&KEY={VWORLD_KEY}"
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "http://localhost:8501"}
+    # [수정] 헤더 수정 (Cloudtype 주소 반영)
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": REFERER_URL}
     try:
         res = requests.get(url, headers=headers, timeout=5, verify=False)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
@@ -448,9 +462,12 @@ def get_cadastral_map_image(lat, lng):
 
 @st.cache_data(show_spinner=False)
 def get_static_map_image(lat, lng):
-    url = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    # [수정] http -> https
+    url = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    # [수정] 헤더 추가
+    headers = {"Referer": REFERER_URL}
     try:
-        res = requests.get(url, timeout=3)
+        res = requests.get(url, headers=headers, timeout=3)
         if res.status_code == 200 and 'image' in res.headers.get('Content-Type', ''): return BytesIO(res.content)
     except: pass
     return None
@@ -639,8 +656,8 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
         img_insert_map = {
             1: ('u1', Cm(1.35), Cm(2.35), Cm(24.84), Cm(15.74)),  
             2: ('u2', Cm(1.35), Cm(2.35), Cm(13.61), Cm(10.98)),   
-            4: ('u3', Cm(1.35), Cm(2.35), Cm(20.4), Cm(15.74)),   
-            5: ('u4', Cm(1.35), Cm(2.35), Cm(23.21), Cm(15.74))   
+            4: ('u3', Cm(1.35), Cm(2.35), Cm(20.4), Cm(15.74)),    
+            5: ('u4', Cm(1.35), Cm(2.35), Cm(23.21), Cm(15.74))    
         }
         for s_idx, (key, l, t, w, h) in img_insert_map.items():
             if s_idx < len(prs.slides) and key in images_dict and images_dict[key]:
@@ -756,8 +773,8 @@ def create_pptx(info, full_addr, finance, zoning, lat, lng, land_price, selling_
         # 요청: "높이11.11 너비 8.78" -> h=11.11, w=8.78
         img_specs = {
             "{{건물사진}}": {'w': 8.78, 'h': 11.11},
-            "{{위치도}}":   {'w': 8.78, 'h': 9.17},
-            "{{지적도}}":   {'w': 9.03, 'h': 5.9}
+            "{{위치도}}":    {'w': 8.78, 'h': 9.17},
+            "{{지적도}}":    {'w': 9.03, 'h': 5.9}
         }
 
         # 2. 슬라이드 순회하며 이미지 플레이스홀더 찾기 (텍스트 치환보다 먼저 실행)
@@ -924,9 +941,12 @@ def create_excel(info, full_addr, finance, zoning, lat, lng, land_price, selling
     if uploaded_img: uploaded_img.seek(0); worksheet.insert_image('B6', 'building.png', {'image_data': uploaded_img, 'x_scale': 0.5, 'y_scale': 0.5, 'object_position': 2})
 
     worksheet.write('B22', '위치도', fmt_header); worksheet.merge_range('B23:E35', '', fmt_box)
-    map_img_xls = f"http://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
+    # [수정] http -> https
+    map_img_xls = f"https://api.vworld.kr/req/image?service=image&request=getmap&key={VWORLD_KEY}&center={lng},{lat}&crs=EPSG:4326&zoom=17&size=600,400&format=png&basemap=GRAPHIC"
     try:
-        res = requests.get(map_img_xls, timeout=3)
+        # [수정] 헤더 추가
+        headers = {"Referer": REFERER_URL}
+        res = requests.get(map_img_xls, headers=headers, timeout=3)
         if res.status_code == 200: worksheet.insert_image('B23', 'map.png', {'image_data': BytesIO(res.content), 'x_scale': 0.7, 'y_scale': 0.7})
     except: pass
 
